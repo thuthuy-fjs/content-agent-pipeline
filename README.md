@@ -35,29 +35,36 @@ Claude Code nên không có `pause_turn`; `--safe-mode` chặn CLAUDE.md/skills 
 repo lọt vào ngữ cảnh agent; mọi tool đụng tới file đều bị chặn. Con số chi phí
 in ra ở cuối là **giá quy đổi nếu gọi API**, không phải tiền bị trừ.
 
-## Đẩy kết quả lên Notion (tuỳ chọn)
+## Notion là nơi lưu duy nhất
 
-Mỗi lần chạy thật (không phải `--dry-run`) có thể tự đẩy một page vào một
-database Notion — page có đủ kịch bản theo timeline, ghi chú nghiên cứu kèm
-nguồn bấm được, và metadata; các cột số/chọn (nền tảng, chi phí, backend,
-tags...) map vào property của database để lọc/sắp xếp được.
+Pipeline **không ghi bất kỳ file nào xuống đĩa**, kể cả file tạm. Mỗi lần chạy
+thật tạo một page trong database Notion; web UI đọc ngược từ đó.
 
 ```bash
-cp .env.example .env
-# điền NOTION_TOKEN và NOTION_DATA_SOURCE_ID — cần cả hai mới kích hoạt
+cp .env.example .env   # điền NOTION_TOKEN và NOTION_DATA_SOURCE_ID
 ```
 
 1. Tạo integration tại notion.so/my-integrations, copy token.
-2. Mở database đích trong Notion → "..." → Connections → thêm integration đó
-   (thiếu bước này thì API trả 404 dù token đúng).
+2. Mở database đích → "..." → Connections → thêm integration đó (thiếu bước này
+   API trả 404 dù token đúng).
+3. `NOTION_DATA_SOURCE_ID` là **data source id**, không phải id trong URL trang —
+   hai thứ này khác nhau và dễ nhầm.
 
-Thiếu một trong hai biến thì pipeline bỏ qua bước này hoàn toàn, không cảnh
-báo, không lỗi. Có cấu hình rồi mà một lần chạy cụ thể không muốn đẩy: thêm
-`--no-notion`. Đẩy thất bại (mạng, token sai, database chưa share) chỉ thành
-một dòng cảnh báo — output local đã ghi xong trước đó nên không mất gì.
+Thiếu cấu hình thì run thật bị **chặn ngay từ đầu**, trước khi gọi model, để
+không đốt hạn mức rồi mới phát hiện không có chỗ lưu.
 
-`content_agent/notion_publish.py` chỉ dùng `urllib` (thư viện chuẩn), không
-thêm dependency — máy này pip đang hỏng nên giữ nguyên tắc như `web.py`.
+Mỗi page có hai phần: phần người đọc (kịch bản theo timeline, nguồn bấm được,
+metadata) và một khối `code` chứa **JSON gốc**. UI đọc lại từ khối JSON đó chứ
+không parse ngược block trình bày — block trình bày là bản dịch một chiều (độ
+tin cậy thành màu chữ, timestamp thành tiêu đề) nên parse ngược sẽ mất dữ liệu
+và vỡ khi ai đó sửa tay trang Notion.
+
+**Rủi ro cần biết:** không còn bản local nào để lùi về. Nếu đẩy Notion thất bại
+giữa chừng, toàn bộ JSON gốc được đổ ra stdout để copy lại thủ công trước khi
+báo lỗi — đó là lớp cứu vãn cuối cùng.
+
+`--dry-run` không lưu ở đâu cả (không đĩa, không Notion): vẫn dùng để kiểm tra
+đường code và schema, nhưng không xem được nội dung mẫu.
 
 ## Giao diện web
 
@@ -73,12 +80,12 @@ Trang cũng liệt kê các lần chạy trước, nhóm theo ngày, để mở 
 Server chỉ dùng thư viện chuẩn ([web.py](content_agent/web.py) +
 [web_ui.html](content_agent/web_ui.html)), bind vào 127.0.0.1, và mỗi lần bấm chạy
 là một tiến trình `run.py` riêng — UI đọc stdout của nó chứ không gọi model trực tiếp.
-Link có dạng `#run/<id>` (đang chạy) và `#result/<YYYYMMDD%2Frun>/<tab>` (kết quả cũ)
-nên F5 hay chia sẻ link đều không mất chỗ đang xem.
+Link có dạng `#run/<id>` (đang chạy) và `#result/n%3A<page_id>/<tab>` (kết quả cũ,
+đọc từ Notion) nên F5 hay chia sẻ link đều không mất chỗ đang xem.
 
-Output ghi vào `output/<YYYYMMDD>/<slug>-<HHMMSS>/` — ngày ở thư mục cha, tên run
-chỉ mang giờ. Server vẫn đọc được các cấu trúc cũ (run nằm thẳng trong `output/`,
-hoặc tên run mang đủ `YYYYMMDD-HHMMSS`).
+Nút **Dừng** hiện trong lúc chạy: nó giết cả nhóm tiến trình (`run.py` lẫn `claude`
+con của nó) chứ không chỉ tiến trình cha, nếu không thì `claude` mồ côi vẫn chạy
+tiếp và vẫn tốn hạn mức.
 
 ## Chạy bằng dòng lệnh
 
@@ -94,7 +101,7 @@ hoặc tên run mang đủ `YYYYMMDD-HHMMSS`).
 ```
 
 Tuỳ chọn khác: `--tone`, `--audience`, `--language`, `--must-include` (lặp được),
-`--avoid` (lặp được), `--model`, `--max-tokens`, `--out`, `--quiet`.
+`--avoid` (lặp được), `--model`, `--max-tokens`, `--quiet`.
 
 Model mặc định là `claude-opus-5`. Muốn rẻ hơn: `--model claude-sonnet-5` (hoặc
 đặt `CONTENT_AGENT_MODEL`). Với model không hỗ trợ web search bản mới hay
@@ -114,22 +121,20 @@ biến đổi dữ liệu có sẵn nên hạ model được:
 .venv/bin/python run.py --topic "..." --stage-model script=claude-opus-5
 ```
 
-Bước nào chạy model khác mặc định thì dòng log ghi kèm tên model, và `run_meta.json`
-lưu lại bản đồ trong `usage.stage_models`. Trên UI đây là ô "Model bước phụ".
+Bước nào chạy model khác mặc định thì dòng log ghi kèm tên model, và JSON gốc trên
+Notion lưu bản đồ trong `meta.usage.stage_models`. Trên UI đây là ô "Model bước phụ".
 
 ## Output
 
-Mỗi lần chạy tạo `output/<slug-chủ-đề>-<timestamp>/`:
+Mỗi lần chạy tạo một page trong database Notion, không có file nào trên đĩa:
 
-| File | Nội dung |
+| Phần trên page | Nội dung |
 |---|---|
-| `script.md` | Kịch bản để cầm đi quay: timestamp, lời thoại, gợi ý hình ảnh, nguồn |
-| `description.txt` | Description + hashtag, kèm các phương án title khác |
-| `tags.json` | `tags` + `hashtags` |
-| `title_options.json` | 3–5 phương án title |
-| `research_notes.json` | Fact + URL nguồn + độ tin cậy, để trace lại claim trong script |
-| `script.json` | Script dạng có cấu trúc (input cho B-roll Agent ở v0.3) |
-| `brief.json`, `run_meta.json` | Brief đã dùng; token/chi phí/cảnh báo của lần chạy |
+| Properties | Chủ đề, nền tảng, thời lượng mục tiêu/đọc thử, lệch %, model, backend, chi phí, tags, hashtag |
+| Kịch bản | Từng section theo timestamp: lời thoại + gợi ý hình ảnh |
+| Nghiên cứu | Fact kèm độ tin cậy và nguồn bấm được, góc kể chuyện, hook, điểm bỏ ngỏ |
+| Metadata | Các phương án title, description |
+| Dữ liệu gốc (JSON) | Toàn bộ brief/research/script/metadata/meta để web UI đọc lại chính xác |
 
 ## Kiến trúc
 

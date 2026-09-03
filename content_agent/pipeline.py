@@ -1,24 +1,22 @@
-"""Orchestration MVP: Research -> Script -> Metadata -> Packager (§3, §4 SPEC.md)."""
+"""Orchestration MVP: Research -> Script -> Metadata -> Notion (§3, §4 SPEC.md).
+
+Pipeline không ghi bất kỳ file nào xuống đĩa: kết quả đi thẳng lên Notion
+(xem notion_publish.py). Đổi lại, run thật bắt buộc phải có Notion cấu hình
+sẵn — cli.py chặn từ đầu để không đốt hạn mức rồi mới phát hiện không có chỗ lưu.
+"""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime
-from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from . import notion_publish
 from .agents import run_metadata, run_research, run_script
 from .brief import VideoBrief
 from .config import MAX_LOW_CONFIDENCE_RATIO
-from .llm import ClaudeRunner
-from .render import render_description_txt, render_script_md
+from .llm import ClaudeRunner, ContentAgentError
 from .schemas import ResearchNotes
 from .timeline import build_timeline, duration_report
-
-
-def _write_json(path: Path, payload) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _fact_check_gate(research: ResearchNotes, warnings: List[str]) -> None:
@@ -33,27 +31,10 @@ def _fact_check_gate(research: ResearchNotes, warnings: List[str]) -> None:
         warnings.append(f"{len(missing)} thông tin không có URL nguồn.")
 
 
-def run_pipeline(
-    brief: VideoBrief,
-    runner: ClaudeRunner,
-    out_root: Path,
-    out_dir: Optional[Path] = None,
-    push_to_notion: bool = True,
-) -> dict:
-    """Chạy hết pipeline, ghi output ra thư mục, trả về summary."""
+def run_pipeline(brief: VideoBrief, runner: ClaudeRunner) -> dict:
+    """Chạy hết pipeline, đẩy kết quả lên Notion, trả về summary."""
     warnings: List[str] = []
     log = print if runner.verbose else (lambda *a, **k: None)
-
-    if out_dir is None:
-        now = datetime.now()
-        # output/<YYYYMMDD>/<slug>-<HHMMSS>: ngày nằm ở thư mục cha, tên run chỉ
-        # cần giờ để phân biệt nhiều lần chạy cùng chủ đề trong ngày.
-        out_dir = (
-            Path(out_root)
-            / now.strftime("%Y%m%d")
-            / f"{brief.slug()}-{now.strftime('%H%M%S')}"
-        )
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     log("[1/3] Research...")
     research = run_research(runner, brief)
@@ -72,23 +53,7 @@ def run_pipeline(
     log("[3/3] Metadata...")
     metadata = run_metadata(runner, brief, script, timeline)
 
-    # Thư mục được tạo từ đầu run (vài phút trước) để lỗi giữa chừng vẫn để lại dấu
-    # vết; tạo lại ngay trước khi ghi phòng trường hợp nó biến mất trong lúc chạy.
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(out_dir / "brief.json", brief.model_dump())
-    _write_json(out_dir / "research_notes.json", research.model_dump())
-    _write_json(out_dir / "script.json", script.model_dump())
-    _write_json(out_dir / "title_options.json", {"title_options": metadata.title_options})
-    _write_json(out_dir / "tags.json", {"tags": metadata.tags, "hashtags": metadata.hashtags})
-    (out_dir / "script.md").write_text(
-        render_script_md(brief, script, timeline, report, research), encoding="utf-8"
-    )
-    (out_dir / "description.txt").write_text(
-        render_description_txt(metadata), encoding="utf-8"
-    )
-
     summary = {
-        "output_dir": str(out_dir),
         "working_title": script.working_title,
         "sections": len(timeline),
         "facts": len(research.facts),
@@ -97,17 +62,28 @@ def run_pipeline(
         "usage": runner.usage_summary(),
     }
 
-    # Notion là bản sao thêm, không phải nguồn thật — output local đã ghi xong ở
-    # trên nên lỗi ở đây chỉ thành cảnh báo, không được làm hỏng cả lần chạy.
-    # Bỏ qua với --dry-run: runner.backend giữ nguyên "dry-run" khi FakeClient
+    # --dry-run không đẩy đi đâu cả: nó là công cụ kiểm tra đường code, không
+    # phải nội dung thật. runner.backend giữ nguyên "dry-run" khi FakeClient
     # được truyền vào (xem ClaudeRunner.__post_init__), tận dụng lại tín hiệu đó.
-    if push_to_notion and runner.backend != "dry-run" and notion_publish.is_configured():
-        try:
-            summary["notion_url"] = notion_publish.publish_run(
-                out_dir, summary, brief, research, timeline, metadata
-            )
-        except notion_publish.NotionPublishError as exc:
-            warnings.append(f"Không đẩy lên Notion được: {exc}")
+    if runner.backend == "dry-run":
+        return summary
 
-    _write_json(out_dir / "run_meta.json", summary)
+    try:
+        page = notion_publish.publish_run(brief, research, script, timeline, metadata, summary)
+    except notion_publish.NotionPublishError as exc:
+        # Không còn bản local nào để lùi về, nên trước khi báo hỏng phải đổ toàn
+        # bộ nội dung ra stdout — cứu vãn cuối cùng để không mất trắng công đã
+        # tiêu hạn mức sinh ra.
+        log("\n=== NOTION LỖI — JSON GỐC ĐỔ RA ĐÂY ĐỂ BẠN COPY LẠI ===")
+        log(json.dumps(
+            {"brief": brief.model_dump(), "research": research.model_dump(),
+             "script": script.model_dump(), "metadata": metadata.model_dump(),
+             "meta": summary},
+            ensure_ascii=False,
+        ))
+        log("=== HẾT JSON GỐC ===\n")
+        raise ContentAgentError(f"Không lưu được lên Notion: {exc}") from exc
+
+    summary["notion_url"] = page["url"]
+    summary["notion_page_id"] = page["id"]
     return summary

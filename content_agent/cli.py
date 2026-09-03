@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import notion_publish
 from .brief import PLATFORMS, VideoBrief
 from .config import DEFAULT_MAX_TOKENS, DEFAULT_MODEL, LIGHT_STAGES, PIPELINE_STAGES
 from .llm import ClaudeRunner, ContentAgentError
@@ -44,17 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
              + ", ".join(PIPELINE_STAGES),
     )
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
-    parser.add_argument("--out", type=Path, default=Path("output"))
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Chạy thử toàn bộ pipeline với dữ liệu giả, không gọi API",
-    )
-    parser.add_argument(
-        "--no-notion",
-        action="store_true",
-        help="Không đẩy kết quả lên Notion dù đã cấu hình NOTION_TOKEN",
     )
     return parser
 
@@ -108,6 +103,15 @@ def main(argv=None) -> int:
         print(f"Dừng pipeline: {exc}", file=sys.stderr)
         return 1
 
+    if not args.dry_run and not notion_publish.is_configured():
+        print(
+            "Dừng pipeline: chưa cấu hình Notion (cần NOTION_TOKEN và "
+            "NOTION_DATA_SOURCE_ID trong .env). Pipeline không ghi file local nữa "
+            "nên không có chỗ nào để lưu kết quả.",
+            file=sys.stderr,
+        )
+        return 1
+
     client = None
     if args.dry_run:
         from .fake import FakeClient
@@ -123,14 +127,16 @@ def main(argv=None) -> int:
     )
 
     try:
-        summary = run_pipeline(
-            brief, runner, out_root=args.out, push_to_notion=not args.no_notion
-        )
+        summary = run_pipeline(brief, runner)
     except ContentAgentError as exc:
         print(f"Dừng pipeline: {exc}", file=sys.stderr)
         return 1
 
-    print(f"\nXong -> {summary['output_dir']}")
+    # web.py bắt đúng tiền tố "Xong -> " này để biết run đã xong và lấy link.
+    if summary.get("notion_url"):
+        print(f"\nXong -> {summary['notion_url']}")
+    else:
+        print("\nXong (chạy thử — không lưu ở đâu).")
     print(f"  Title nháp: {summary['working_title']}")
     duration = summary["duration"]
     print(
@@ -149,8 +155,6 @@ def main(argv=None) -> int:
             print(f"  Chi phí ước tính: ${cost:.4f}")
     for warning in summary["warnings"]:
         print(f"  ! {warning}")
-    if summary.get("notion_url"):
-        print(f"  Notion: {summary['notion_url']}")
     return 0
 
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import re
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -20,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from . import notion_publish
 from .brief import PLATFORMS
 from .config import DEFAULT_MODEL, LIGHT_STAGES, PRICING_USD_PER_MTOK
 
@@ -39,8 +42,7 @@ STEP_RE = re.compile(r"^\[(\d+)/(\d+)\]\s*(.+?)\.\.\.\s*$")
 USAGE_RE = re.compile(
     r"^\s*·\s*(\S+):\s*(\d+) in / (\d+) out \(\$?([\d.]+|n/a)\)(?:\s*·\s*(\S+))?"
 )
-DONE_RE = re.compile(r"^Xong -> (.+)$")
-NOTION_RE = re.compile(r"^\s*Notion: (\S+)$")
+DONE_RE = re.compile(r"^Xong -> (.+)$")  # giờ bắt link Notion, không phải đường dẫn
 WARN_RE = re.compile(r"^\s*!\s*(.+)$")
 RETRY_RE = re.compile(r"^\s*!\s*(\S+): output sai schema")
 
@@ -54,9 +56,12 @@ class Run:
         # Giữ lại brief để mở lại bằng link #run/<id> vẫn biết đang chạy cái gì.
         self.brief = brief
         self.started_at = time.time()
+        self.proc: Optional[subprocess.Popen] = None
+        self._stop_requested = False
+        # Run thật kết thúc bằng một link Notion (không còn thư mục local nào).
+        self.notion_url: Optional[str] = None
         self.events: List[Dict[str, Any]] = []
         self.status = "running"
-        self.output_dir: Optional[str] = None
         self.error: Optional[str] = None
         self.result: Optional[Dict[str, Any]] = None
         self._lock = threading.Lock()
@@ -73,7 +78,7 @@ class Run:
                 "started_at": self.started_at,
                 "events": self.events[since:],
                 "total_events": len(self.events),
-                "output_dir": self.output_dir,
+                "notion_url": self.notion_url,
                 "error": self.error,
                 "result": self.result,
             }
@@ -81,9 +86,17 @@ class Run:
     def start(self) -> None:
         threading.Thread(target=self._run, daemon=True).start()
 
+    def stop(self) -> bool:
+        """Dừng tiến trình đang chạy. Trả về False nếu không có gì để dừng."""
+        if self.proc is None or self.status != "running":
+            return False
+        self._stop_requested = True
+        _terminate_process_group(self.proc)
+        return True
+
     def _run(self) -> None:
         try:
-            proc = subprocess.Popen(
+            self.proc = subprocess.Popen(
                 self.argv,
                 cwd=str(ROOT),
                 stdout=subprocess.PIPE,
@@ -91,7 +104,12 @@ class Run:
                 stdin=subprocess.DEVNULL,
                 bufsize=1,
                 universal_newlines=True,
+                # Tự làm session leader: run.py gọi `claude` như tiến trình con, và
+                # `claude` (Node) có thể đẻ thêm cháu. Không tách nhóm thì dừng riêng
+                # run.py để lại cả cây tiến trình đó chạy tiếp, vẫn tốn hạn mức/token.
+                start_new_session=True,
             )
+            proc = self.proc
         except OSError as exc:
             self.status, self.error = "error", f"Không chạy được run.py: {exc}"
             return
@@ -102,8 +120,18 @@ class Run:
         proc.wait()
 
         if self.status == "running":
-            if proc.returncode == 0 and self.output_dir:
-                self.result = read_output_dir(ROOT / self.output_dir)
+            if self._stop_requested:
+                self.status = "stopped"
+                self.error = "Đã dừng theo yêu cầu."
+            elif proc.returncode == 0:
+                # Không có link Notion nghĩa là --dry-run: chạy xong nhưng không
+                # lưu ở đâu nên cũng không có gì để dựng màn kết quả.
+                page_id = notion_publish.page_id_from_url(self.notion_url or "")
+                if page_id:
+                    try:
+                        self.result = notion_publish.read_run(page_id)
+                    except notion_publish.NotionPublishError as exc:
+                        self.error = f"Đã lưu lên Notion nhưng đọc lại không được: {exc}"
                 self.status = "done"
             else:
                 self.status = "error"
@@ -132,13 +160,8 @@ class Run:
 
         match = DONE_RE.match(line)
         if match:
-            self.output_dir = match.group(1).strip()
-            self._add({"type": "output_dir", "path": self.output_dir})
-            return
-
-        match = NOTION_RE.match(line)
-        if match:
-            self._add({"type": "notion", "url": match.group(1), "message": line.strip()})
+            self.notion_url = match.group(1).strip()
+            self._add({"type": "notion", "url": self.notion_url})
             return
 
         if line.startswith("Dừng pipeline:"):
@@ -226,7 +249,23 @@ def run_started_at(path: Path) -> float:
 
 
 def list_runs(limit: int = 20) -> List[Dict[str, Any]]:
-    """Các lần chạy đã hoàn tất trong output/, mới nhất trước."""
+    """Lần chạy gần nhất: Notion (nguồn hiện tại) + output/ (lịch sử trước khi đổi).
+
+    Hai nguồn không trùng nhau — run cũ chỉ có trên đĩa, run mới chỉ có trên
+    Notion — nên gộp thẳng rồi sắp theo thời gian, không cần khử trùng lặp.
+    """
+    runs = _list_local_runs(limit)
+    if notion_publish.is_configured():
+        try:
+            runs += notion_publish.query_recent_runs(limit)
+        except notion_publish.NotionPublishError:
+            pass  # mất mạng thì vẫn hiện được phần lịch sử local
+    runs.sort(key=lambda r: r.get("_sort_ts") or 0, reverse=True)
+    return runs[:limit]
+
+
+def _list_local_runs(limit: int = 20) -> List[Dict[str, Any]]:
+    """Lịch sử còn sót trên đĩa từ trước khi chuyển hẳn sang Notion."""
     root = ROOT / "output"
     if not root.is_dir():
         return []
@@ -255,6 +294,7 @@ def list_runs(limit: int = 20) -> List[Dict[str, Any]]:
         started = datetime.fromtimestamp(run_started_at(path))
         runs.append({
             "dir": path.relative_to(root).as_posix(),
+            "_sort_ts": run_started_at(path),
             "date": started.strftime("%d/%m/%Y"),
             "started": started.strftime("%H:%M"),
             "topic": brief.get("topic", path.name),
@@ -314,6 +354,29 @@ def build_argv(payload: Dict[str, Any]) -> Tuple[List[str], Dict[str, Any]]:
     return argv, brief
 
 
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    """SIGTERM cả nhóm tiến trình, leo thang SIGKILL nếu sau vài giây vẫn sống.
+
+    Chạy trong thread riêng vì handler HTTP gọi `stop()` phải trả lời ngay,
+    không đợi tiến trình con thoát hẳn.
+    """
+    def escalate() -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, AttributeError):
+            proc.terminate()
+            return
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    threading.Thread(target=escalate, daemon=True).start()
+
+
 RUNS: Dict[str, Run] = {}
 
 
@@ -366,6 +429,20 @@ class Handler(BaseHTTPRequestHandler):
 
         if route.path == "/api/result":
             params = parse_qs(route.query)
+
+            page_id = (params.get("page_id") or [""])[0]
+            if page_id:
+                try:
+                    result = notion_publish.read_run(page_id)
+                except notion_publish.NotionPublishError as exc:
+                    self._json({"error": str(exc)}, 502)
+                    return
+                if result is None:
+                    self._json({"error": "Trang Notion này không có khối JSON gốc."}, 404)
+                    return
+                self._json(result)
+                return
+
             name = (params.get("dir") or [""])[0]
             target = (ROOT / "output" / name).resolve()
             # Chỉ cho đọc bên trong output/ (kể cả lồng trong thư mục ngày),
@@ -392,15 +469,25 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "not found"}, 404)
 
     def do_POST(self) -> None:
-        if urlparse(self.path).path != "/api/run":
+        route = urlparse(self.path).path
+        if route not in ("/api/run", "/api/stop"):
             self._json({"error": "not found"}, 404)
             return
 
         length = int(self.headers.get("Content-Length") or 0)
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        except json.JSONDecodeError as exc:
+            self._json({"error": str(exc)}, 400)
+            return
+
+        if route == "/api/stop":
+            self.do_POST_stop(payload)
+            return
+
+        try:
             argv, brief = build_argv(payload)
-        except (ValueError, json.JSONDecodeError) as exc:
+        except ValueError as exc:
             self._json({"error": str(exc)}, 400)
             return
 
@@ -408,6 +495,14 @@ class Handler(BaseHTTPRequestHandler):
         RUNS[run.id] = run
         run.start()
         self._json({"run_id": run.id, "command": " ".join(argv)})
+
+    def do_POST_stop(self, payload: Dict[str, Any]) -> None:
+        run = RUNS.get(payload.get("id") or "")
+        if run is None:
+            self._json({"error": "Không tìm thấy lần chạy này."}, 404)
+            return
+        stopped = run.stop()
+        self._json({"stopped": stopped, "status": run.status})
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765) -> None:

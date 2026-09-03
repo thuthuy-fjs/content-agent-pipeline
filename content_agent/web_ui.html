@@ -45,6 +45,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:14px;margin-bottom:1
 .check input{width:auto}
 .err{background:color-mix(in srgb,var(--err) 12%,transparent);border:1px solid var(--err);
   color:var(--err);padding:12px 14px;border-radius:9px;margin-bottom:16px;font-size:14px}
+.err.stopped{background:var(--chip);border-color:var(--line);color:var(--muted)}
 /* tiến trình */
 .steps{list-style:none;margin:0 0 20px;padding:0}
 .steps li{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--line)}
@@ -163,8 +164,13 @@ a{color:var(--accent);word-break:break-all}
 
 <!-- MÀN 2: TIẾN TRÌNH -->
 <section id="screen-run" class="hidden">
-  <h1 id="run-topic"></h1>
-  <p class="sub" id="run-brief"></p>
+  <div class="head">
+    <div>
+      <h1 id="run-topic"></h1>
+      <p class="sub" id="run-brief" style="margin:0"></p>
+    </div>
+    <button id="stop-btn" class="ghost hidden">Dừng</button>
+  </div>
   <div class="card">
     <div id="run-err" class="err hidden"></div>
     <ul class="steps" id="steps"></ul>
@@ -261,15 +267,31 @@ function startWatching(startedAt){
   TIMER = setInterval(() => {
     $("#elapsed").textContent = mmss(Math.max(0, Math.floor((Date.now()-T0)/1000)));
   }, 1000);
+  $("#stop-btn").classList.remove("hidden");
+  $("#stop-btn").disabled = false;
+  $("#stop-btn").textContent = "Dừng";
   poll();
 }
+
+$("#stop-btn").onclick = async () => {
+  if (!confirm("Dừng pipeline đang chạy? Phần đã tính đến giờ sẽ không được lưu.")) return;
+  const btn = $("#stop-btn");
+  btn.disabled = true;
+  btn.textContent = "Đang dừng…";
+  await fetch("/api/stop", {method:"POST", headers:{"Content-Type":"application/json"},
+                            body: JSON.stringify({id: RUN_ID})});
+};
 function showFormErr(msg){ const b = $("#form-err"); b.textContent = msg; b.classList.remove("hidden"); }
 
 /* Mở lại một lần chạy từ URL (#run/<id>) — F5 giữa chừng không mất tiến trình. */
 (function resume(){
   const past = location.hash.match(/^#result\/([^/]+)(?:\/(\d+))?$/);
   if (past){
-    fetch("/api/result?dir=" + encodeURIComponent(decodeURIComponent(past[1])))
+    const ref = decodeURIComponent(past[1]);
+    const url = ref.startsWith("n:")
+      ? "/api/result?page_id=" + encodeURIComponent(ref.slice(2))
+      : "/api/result?dir=" + encodeURIComponent(ref.replace(/^l:/, ""));
+    fetch(url)
       .then(r => r.ok ? r.json() : null)
       .then(d => d && showResult(d, parseInt(past[2] || "0", 10)));
     return;
@@ -293,7 +315,9 @@ fetch("/api/runs").then(r => r.json()).then(({runs}) => {
       [r.topic, r.platform, r.duration ? r.duration + "s" : null].filter(Boolean).join(" · ")));
     d.append(left, el("div","m", (r.started || "") + " · Xem →"));
     d.onclick = async () => {
-      const res = await fetch("/api/result?dir=" + encodeURIComponent(r.dir));
+      const res = await fetch(r.page_id
+        ? "/api/result?page_id=" + encodeURIComponent(r.page_id)
+        : "/api/result?dir=" + encodeURIComponent(r.dir));
       if (res.ok) showResult(await res.json());
     };
     box.append(d);
@@ -352,10 +376,12 @@ async function poll(){
 
   if (s.status === "running"){ setTimeout(poll, 700); return; }
   clearInterval(TIMER);
+  $("#stop-btn").classList.add("hidden");
 
-  if (s.status === "error"){
+  if (s.status === "error" || s.status === "stopped"){
     const b = $("#run-err");
     b.textContent = s.error || "Pipeline dừng giữa chừng.";
+    b.classList.toggle("stopped", s.status === "stopped");
     b.classList.remove("hidden");
     $("#run-actions").classList.remove("hidden");
     STEPS.forEach(li => li.classList.remove("active"));
@@ -364,6 +390,17 @@ async function poll(){
   const last = $("#steps").lastElementChild;
   if (last){ last.classList.remove("active"); last.classList.add("done");
              last.querySelector(".dot").textContent = "✓"; }
+
+  if (!s.result){
+    // --dry-run chạy xong nhưng không lưu ở đâu nên không có gì để dựng.
+    const b = $("#run-err");
+    b.textContent = s.error
+      || "Chạy thử xong. Dữ liệu giả không được lưu ở đâu nên không có kết quả để xem.";
+    b.classList.add("stopped");
+    b.classList.remove("hidden");
+    $("#run-actions").classList.remove("hidden");
+    return;
+  }
   showResult(s.result);
 }
 
@@ -407,7 +444,9 @@ function showResult(res, tab = 0){
   const pick = i => {
     [...tb.children].forEach((c, j) => c.setAttribute("aria-selected", i === j));
     $("#tabbody").replaceChildren(tabs[i][1]());
-    if (res.rel) location.hash = `result/${encodeURIComponent(res.rel)}/${i}`;
+    const ref = res.notion_page_id ? "n:" + res.notion_page_id
+              : res.rel ? "l:" + res.rel : null;
+    if (ref) location.hash = `result/${encodeURIComponent(ref)}/${i}`;
   };
   tabs.forEach(([name], i) => {
     const b = el("button", null, name);
