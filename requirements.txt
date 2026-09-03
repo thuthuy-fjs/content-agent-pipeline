@@ -1,0 +1,4 @@
+# Python 3.8 (Ubuntu 20.04) chỉ cài được anthropic 0.72; bản >=1.0 cần Python >=3.10.
+# Code chạy được cả hai: llm.py tự phát hiện SDK có output_config native hay không.
+anthropic>=0.72,<1
+pydantic>=2.0,<3
