@@ -30,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--must-include", action="append", default=[])
     parser.add_argument("--avoid", action="append", default=[])
 
+    parser.add_argument("--llm-platform", choices=["claude", "chatgpt", "gemini"], default="claude", help="Nền tảng LLM cần dùng")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Model dùng cho mọi bước")
     parser.add_argument(
         "--light-model",
@@ -119,6 +120,7 @@ def main(argv=None) -> int:
         client = FakeClient()
 
     runner = ClaudeRunner(
+        platform=args.llm_platform,
         model=args.model,
         client=client,
         max_tokens=args.max_tokens,
@@ -145,14 +147,8 @@ def main(argv=None) -> int:
         f"đọc thử {duration['spoken_estimate_sec']}s ({duration['drift_pct']:+.1f}%)"
     )
     cost = summary["usage"]["total_cost_usd"]
-    backend = summary["usage"].get("backend")
     if cost is not None:
-        if backend == "claude-cli":
-            # Chạy bằng hạn mức thuê bao Claude Code: đây là giá quy đổi nếu
-            # gọi API, không phải tiền bị trừ.
-            print(f"  Backend: claude -p (thuê bao) · quy đổi ${cost:.4f} nếu dùng API")
-        else:
-            print(f"  Chi phí ước tính: ${cost:.4f}")
+        print(f"  Chi phí ước tính: ${cost:.4f}")
     for warning in summary["warnings"]:
         print(f"  ! {warning}")
     return 0

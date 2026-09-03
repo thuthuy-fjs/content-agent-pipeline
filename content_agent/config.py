@@ -31,11 +31,16 @@ MODERN_MODELS = frozenset(
     }
 )
 
+# Mọi lỗi gọi API bên thứ ba (Anthropic/OpenAI/Gemini/Notion) chỉ hiện đúng câu
+# này cho người dùng; chi tiết thật đi ra stderr để debug.
+PROVIDER_UNAVAILABLE = "Hệ thống hiện không khả dụng. Vui lòng thử lại sau."
+
 MODERN_WEB_SEARCH_TYPE = "web_search_20260209"
 BASIC_WEB_SEARCH_TYPE = "web_search_20250305"
 
 # USD / 1 triệu token (input, output).
 PRICING_USD_PER_MTOK: Dict[str, Tuple[float, float]] = {
+    # Claude
     "claude-fable-5-1": (10.0, 50.0),
     "claude-fable-5": (10.0, 50.0),
     "claude-opus-5": (5.0, 25.0),
@@ -45,6 +50,47 @@ PRICING_USD_PER_MTOK: Dict[str, Tuple[float, float]] = {
     "claude-sonnet-5": (2.0, 10.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
+    
+    # ChatGPT
+    "gpt-5.6-sol": (15.0, 75.0),
+    "gpt-5.6-terra": (5.0, 25.0),
+    "gpt-5.6-luna": (1.0, 5.0),
+    "gpt-5.5-pro": (10.0, 30.0),
+    "gpt-5.5": (2.5, 12.5),
+    "gpt-5.4-pro": (5.0, 15.0),
+    "gpt-5.4": (1.0, 5.0),
+
+    # Gemini
+    "gemini-3.6-flash-high": (1.5, 7.5),
+    "gemini-3.6-flash-medium": (1.0, 5.0),
+    "gemini-3.6-flash-low": (0.5, 2.5),
+    "gemini-3.1-pro-high": (5.0, 20.0),
+    "gemini-3.1-pro-low": (2.0, 10.0),
+}
+
+PLATFORM_MODELS = {
+    "claude": [
+        {"value": "claude-opus-5", "label": "Claude Opus 5"},
+        {"value": "claude-sonnet-5", "label": "Claude Sonnet 5"},
+        {"value": "claude-haiku-4-5", "label": "Claude Haiku 4.5"},
+        {"value": "claude-fable-5-1", "label": "Claude Fable 5.1"},
+    ],
+    "chatgpt": [
+        {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
+        {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
+        {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
+        {"value": "gpt-5.5-pro", "label": "GPT 5.5 Pro"},
+        {"value": "gpt-5.5", "label": "GPT 5.5"},
+        {"value": "gpt-5.4-pro", "label": "GPT 5.4 Pro"},
+        {"value": "gpt-5.4", "label": "GPT 5.4"},
+    ],
+    "gemini": [
+        {"value": "gemini-3.6-flash-high", "label": "Gemini 3.6 Flash (High)"},
+        {"value": "gemini-3.6-flash-medium", "label": "Gemini 3.6 Flash (Medium)"},
+        {"value": "gemini-3.6-flash-low", "label": "Gemini 3.6 Flash (Low)"},
+        {"value": "gemini-3.1-pro-high", "label": "Gemini 3.1 Pro (High)"},
+        {"value": "gemini-3.1-pro-low", "label": "Gemini 3.1 Pro (Low)"},
+    ]
 }
 
 # Tốc độ nói trung bình (âm tiết/giây) dùng để ước lượng thời lượng từ lời thoại.

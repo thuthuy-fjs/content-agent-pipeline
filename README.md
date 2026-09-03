@@ -17,23 +17,17 @@ pip3 install --target .venv/lib/python3.8/site-packages -r requirements.txt
 cp .env.example .env
 ```
 
-## Hai backend
+## Backend
 
-Mặc định pipeline **không gọi Messages API**: nó chạy qua Claude Code headless
-(`claude -p`), tức dùng hạn mức gói thuê bao Claude Code và không tốn credit API.
-Cần cài sẵn `claude` trong PATH.
+Pipeline gọi thẳng Messages API bằng `ANTHROPIC_API_KEY` (thêm
+`ANTHROPIC_WORKSPACE_ID` nếu key gắn với identity — API sẽ báo
+`anthropic-workspace-id is required` nếu thiếu). Con số chi phí in ra ở cuối là
+tiền thật bị trừ vào credit API.
 
-Đặt `CONTENT_AGENT_USE_API=true` trong `.env` để quay lại gọi thẳng Messages API —
-khi đó mới cần `ANTHROPIC_API_KEY` (và `ANTHROPIC_WORKSPACE_ID` nếu key gắn với
-identity, API sẽ báo `anthropic-workspace-id is required` nếu thiếu).
+Có thể đổi sang Gemini hoặc OpenAI ngay trên web UI; khi đó cần
+`GEMINI_API_KEY` / `OPENAI_API_KEY` trong `.env`.
 
 Biến môi trường đã export sẵn luôn thắng file `.env`.
-
-Đường CLI có vài điểm khác, [claude_cli.py](content_agent/claude_cli.py) đã xử lý:
-structured output đi qua cờ `--json-schema`; web search là tool phía client của
-Claude Code nên không có `pause_turn`; `--safe-mode` chặn CLAUDE.md/skills của
-repo lọt vào ngữ cảnh agent; mọi tool đụng tới file đều bị chặn. Con số chi phí
-in ra ở cuối là **giá quy đổi nếu gọi API**, không phải tiền bị trừ.
 
 ## Notion là nơi lưu duy nhất
 

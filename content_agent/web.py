@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import notion_publish
 from .brief import PLATFORMS
-from .config import DEFAULT_MODEL, LIGHT_STAGES, PRICING_USD_PER_MTOK
+from .config import DEFAULT_MODEL, LIGHT_STAGES, PLATFORM_MODELS, PROVIDER_UNAVAILABLE
 
 ROOT = Path(__file__).resolve().parent.parent
 UI_FILE = Path(__file__).resolve().parent / "web_ui.html"
@@ -70,6 +70,15 @@ class Run:
         with self._lock:
             self.events.append(event)
 
+    def current_step(self) -> Optional[Dict[str, Any]]:
+        """Bước đang chạy, để danh sách "đang chạy" nói được nó tới đâu rồi."""
+        with self._lock:
+            for event in reversed(self.events):
+                if event.get("type") == "step":
+                    return {"name": event["name"], "index": event["index"],
+                            "total": event["total"]}
+        return None
+
     def snapshot(self, since: int = 0) -> Dict[str, Any]:
         with self._lock:
             return {
@@ -104,6 +113,7 @@ class Run:
                 stdin=subprocess.DEVNULL,
                 bufsize=1,
                 universal_newlines=True,
+                encoding="utf-8",
                 # Tự làm session leader: run.py gọi `claude` như tiến trình con, và
                 # `claude` (Node) có thể đẻ thêm cháu. Không tách nhóm thì dừng riêng
                 # run.py để lại cả cây tiến trình đó chạy tiếp, vẫn tốn hạn mức/token.
@@ -131,7 +141,8 @@ class Run:
                     try:
                         self.result = notion_publish.read_run(page_id)
                     except notion_publish.NotionPublishError as exc:
-                        self.error = f"Đã lưu lên Notion nhưng đọc lại không được: {exc}"
+                        print(f"[provider] Notion: đọc lại thất bại: {exc}", file=sys.stderr)
+                        self.error = PROVIDER_UNAVAILABLE
                 self.status = "done"
             else:
                 self.status = "error"
@@ -140,6 +151,11 @@ class Run:
     def _consume(self, line: str) -> None:
         """Đổi một dòng stdout thành sự kiện có cấu trúc cho UI."""
         if not line.strip():
+            return
+
+        # Chi tiết lỗi nhà cung cấp chỉ dành cho log server, không đẩy ra UI.
+        if line.startswith("[provider] "):
+            print(line, file=sys.stderr)
             return
 
         match = STEP_RE.match(line)
@@ -308,6 +324,32 @@ def _list_local_runs(limit: int = 20) -> List[Dict[str, Any]]:
     return runs
 
 
+def list_active_runs() -> List[Dict[str, Any]]:
+    """Run đang chạy trong tiến trình này.
+
+    Tách khỏi `list_runs()` vì hai nguồn khác hẳn nhau: run xong mới có trang
+    Notion để liệt kê, còn run đang chạy chỉ tồn tại trong RUNS. Nhờ vậy "xong
+    thì biến khỏi danh sách đang chạy" là hệ quả tự nhiên, không cần dọn tay.
+    """
+    runs = []
+    for run in list(RUNS.values()):
+        if run.status != "running":
+            continue
+        brief = run.brief or {}
+        runs.append({
+            "id": run.id,
+            "topic": brief.get("topic"),
+            "platform": brief.get("platform_label") or brief.get("platform"),
+            "duration": brief.get("duration"),
+            "dry_run": brief.get("dry_run"),
+            "started": datetime.fromtimestamp(run.started_at).strftime("%H:%M"),
+            "started_at": run.started_at,
+            "step": run.current_step(),
+        })
+    runs.sort(key=lambda r: r["started_at"], reverse=True)
+    return runs
+
+
 def build_argv(payload: Dict[str, Any]) -> Tuple[List[str], Dict[str, Any]]:
     topic = (payload.get("topic") or "").strip()
     if not topic:
@@ -339,6 +381,10 @@ def build_argv(payload: Dict[str, Any]) -> Tuple[List[str], Dict[str, Any]]:
         value = (payload.get(field) or "").strip()
         if value:
             argv += [flag, value]
+    llm_platform = (payload.get("llm_platform") or "").strip()
+    if llm_platform:
+        argv += ["--llm-platform", llm_platform]
+    
     if payload.get("dry_run"):
         argv.append("--dry-run")
 
@@ -347,6 +393,7 @@ def build_argv(payload: Dict[str, Any]) -> Tuple[List[str], Dict[str, Any]]:
         "platform": platform,
         "platform_label": PLATFORM_LABELS.get(platform, platform),
         "duration": duration,
+        "llm_platform": llm_platform or "claude",
         "model": model or DEFAULT_MODEL,
         "light_model": light if light and light != model else None,
         "dry_run": bool(payload.get("dry_run")),
@@ -412,12 +459,40 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if route.path == "/api/options":
+            # Determine available keys
+            keys = set()
+            for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+                if os.environ.get(k): keys.add(k)
+            try:
+                with open(ROOT / ".env", "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("ANTHROPIC_API_KEY=") and len(line) > 18:
+                            keys.add("ANTHROPIC_API_KEY")
+                        elif line.startswith("OPENAI_API_KEY=") and len(line) > 15:
+                            keys.add("OPENAI_API_KEY")
+                        elif line.startswith("GEMINI_API_KEY=") and len(line) > 15:
+                            keys.add("GEMINI_API_KEY")
+            except OSError:
+                pass
+            
+            avail_platforms = []
+            if "ANTHROPIC_API_KEY" in keys: avail_platforms.append("claude")
+            if "OPENAI_API_KEY" in keys: avail_platforms.append("chatgpt")
+            if "GEMINI_API_KEY" in keys: avail_platforms.append("gemini")
+            if not avail_platforms:
+                avail_platforms = ["claude"] # Fallback
+
+            platform_models = {
+                plat: [{"value": m["value"], "label": m["label"]} for m in mlist]
+                for plat, mlist in PLATFORM_MODELS.items()
+            }
+
             self._json({
                 "light_stages": list(LIGHT_STAGES),
                 "platforms": [{"value": p, "label": PLATFORM_LABELS.get(p, p)} for p in PLATFORMS],
-                "models": [{"value": m, "label": m,
-                            "price": f"${i:g}/${o:g} mỗi 1M token"}
-                           for m, (i, o) in PRICING_USD_PER_MTOK.items()],
+                "avail_platforms": avail_platforms,
+                "platform_models": platform_models,
                 "default_model": DEFAULT_MODEL,
                 "default_duration": 45,
             })
@@ -425,6 +500,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if route.path == "/api/runs":
             self._json({"runs": list_runs()})
+            return
+
+        if route.path == "/api/active":
+            self._json({"runs": list_active_runs()})
             return
 
         if route.path == "/api/result":

@@ -14,7 +14,7 @@ from . import notion_publish
 from .agents import run_metadata, run_research, run_script
 from .brief import VideoBrief
 from .config import MAX_LOW_CONFIDENCE_RATIO
-from .llm import ClaudeRunner, ContentAgentError
+from .llm import ClaudeRunner, provider_error
 from .schemas import ResearchNotes
 from .timeline import build_timeline, duration_report
 
@@ -82,7 +82,7 @@ def run_pipeline(brief: VideoBrief, runner: ClaudeRunner) -> dict:
             ensure_ascii=False,
         ))
         log("=== HẾT JSON GỐC ===\n")
-        raise ContentAgentError(f"Không lưu được lên Notion: {exc}") from exc
+        raise provider_error(f"Notion: không lưu được: {exc}") from exc
 
     summary["notion_url"] = page["url"]
     summary["notion_page_id"] = page["id"]

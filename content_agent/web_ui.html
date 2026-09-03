@@ -54,10 +54,16 @@ details summary{cursor:pointer;color:var(--muted);font-size:14px;margin-bottom:1
   display:grid;place-items:center;font-size:12px;color:var(--muted);margin-top:1px}
 li.active .dot{border-color:var(--accent);color:var(--accent);animation:pulse 1.3s ease-in-out infinite}
 li.done .dot{border-color:var(--ok);background:var(--ok);color:var(--panel)}
+li.locked .dot{font-size:10px;opacity:.55}
+li.failed .dot{border-color:var(--err);color:var(--err)}
 @keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){li.active .dot{animation:none}}
 .stepname{font-weight:600}
+li.locked .stepname{color:var(--muted);font-weight:500}
+li.active .stepname{color:var(--accent)}
+.stepdesc{font-size:13px;color:var(--muted);margin-top:2px}
 .calls{margin-top:6px;font-size:13px;color:var(--muted)}
-.calls div{font-variant-numeric:tabular-nums;padding:1px 0}
+.calls div{padding:1px 0}
 .bar{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);
   border-top:1px solid var(--line);padding-top:14px;font-variant-numeric:tabular-nums}
 pre.log{background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:12px;
@@ -101,6 +107,12 @@ a{color:var(--accent);word-break:break-all}
 .past-item:hover{border-color:var(--accent)}
 .past-item .t{font-weight:600;font-size:14px}
 .past-item .m{font-size:12.5px;color:var(--muted)}
+.running-badge{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
+  color:var(--accent);font-size:12.5px;font-weight:600}
+.running-badge::before{content:"";width:7px;height:7px;border-radius:999px;
+  background:var(--accent);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.running-badge::before{animation:none}}
 .hidden{display:none!important}
 </style>
 </head>
@@ -126,6 +138,13 @@ a{color:var(--accent);word-break:break-all}
         <label for="duration">Thời lượng <span class="hint">— để trống = 45 giây</span></label>
         <input id="duration" type="number" min="5" max="1800" placeholder="45">
       </div>
+    </div>
+    <div class="row" id="llm-platform-row" class="hidden">
+      <div class="field">
+        <label for="llm-platform">Nền tảng LLM</label>
+        <select id="llm-platform"></select>
+      </div>
+      <div><!-- Spacer --></div>
     </div>
     <div class="row">
       <div class="field">
@@ -156,6 +175,10 @@ a{color:var(--accent);word-break:break-all}
     </details>
     <button id="go" class="primary">Chạy pipeline</button>
   </div>
+  <div id="active" class="hidden" style="margin-top:24px">
+    <h2 style="margin-bottom:10px">Đang chạy</h2>
+    <div id="active-list"></div>
+  </div>
   <div id="past" class="hidden" style="margin-top:24px">
     <h2 style="margin-bottom:10px">Lần chạy trước</h2>
     <div id="past-list"></div>
@@ -169,16 +192,17 @@ a{color:var(--accent);word-break:break-all}
       <h1 id="run-topic"></h1>
       <p class="sub" id="run-brief" style="margin:0"></p>
     </div>
-    <button id="stop-btn" class="ghost hidden">Dừng</button>
+    <div style="display:flex;gap:8px">
+      <button id="stop-btn" class="ghost hidden">Dừng</button>
+      <button id="back-btn" class="ghost" onclick="goToForm()"
+              title="Pipeline vẫn chạy tiếp; mở lại ở mục “Đang chạy”">← Quay lại</button>
+    </div>
   </div>
   <div class="card">
     <div id="run-err" class="err hidden"></div>
     <ul class="steps" id="steps"></ul>
-    <div class="bar"><span id="elapsed">0:00</span><span id="running-cost"></span></div>
+    <div class="bar"><span id="elapsed">0:00</span><span id="run-progress"></span></div>
     <details style="margin-top:16px"><summary>Log thô</summary><pre class="log" id="log"></pre></details>
-    <div id="run-actions" class="hidden" style="margin-top:16px">
-      <button class="ghost" onclick="location.reload()">← Chạy chủ đề khác</button>
-    </div>
   </div>
 </section>
 
@@ -191,7 +215,7 @@ a{color:var(--accent);word-break:break-all}
     </div>
     <div style="display:flex;gap:8px">
       <button id="res-notion" class="ghost hidden">Xem trên Notion</button>
-      <button class="ghost" onclick="location.reload()">Chạy mới</button>
+      <button class="ghost" onclick="goToForm()">← Quay lại</button>
     </div>
   </div>
   <div id="res-warn"></div>
@@ -207,23 +231,54 @@ const el = (t, cls, txt) => { const n = document.createElement(t);
   if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
 const show = id => ["screen-form","screen-run","screen-result"]
   .forEach(s => $("#"+s).classList.toggle("hidden", s !== id));
-const fmtInt = n => n.toLocaleString("vi-VN");
 const mmss = s => Math.floor(s/60) + ":" + String(s%60).padStart(2,"0");
 
 let OPTIONS = null, RUN_ID = null, SINCE = 0, T0 = 0, TIMER = null, RESUMED = false;
+// Tăng mỗi lần điều hướng. Mọi tác vụ async có thể đổi màn hình phải chụp lại số
+// này trước khi await và bỏ qua kết quả nếu số đã đổi — nếu không, một fetch bay
+// dở từ màn trước sẽ kéo người dùng ra khỏi màn họ vừa mở.
+let NAV_GEN = 0;
 const STEPS = [];
 
 /* ---------- màn 1 ---------- */
+function renderModels(platform) {
+  $("#model").innerHTML = "";
+  $("#light-model").innerHTML = "";
+  const models = OPTIONS.platform_models[platform] || OPTIONS.platform_models["claude"];
+  models.forEach(m => {
+    $("#model").add(new Option(m.label, m.value));
+    $("#light-model").add(new Option(m.label, m.value));
+  });
+  // Default to first model
+  if(models.length > 0) $("#model").value = models[0].value;
+  $("#light-model").add(new Option("Giống model chính", ""), 0);
+  $("#light-model").value = "";
+}
+
 fetch("/api/options").then(r => r.json()).then(o => {
   OPTIONS = o;
   o.platforms.forEach(p => $("#platform").add(new Option(p.label, p.value)));
-  o.models.forEach(m => {
-    $("#model").add(new Option(m.label + " — " + m.price, m.value));
-    $("#light-model").add(new Option(m.label + " — " + m.price, m.value));
+  
+  const platMap = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini"};
+  o.avail_platforms.forEach(p => {
+    $("#llm-platform").add(new Option(platMap[p] || p, p));
   });
-  $("#model").value = o.default_model;
-  $("#light-model").add(new Option("Giống model chính", ""), 0);
-  $("#light-model").value = "";
+  
+  if (o.avail_platforms.length < 2) {
+    $("#llm-platform-row").classList.add("hidden");
+  } else {
+    $("#llm-platform-row").classList.remove("hidden");
+  }
+
+  $("#llm-platform").onchange = (e) => {
+    renderModels(e.target.value);
+  };
+  
+  // Initialize with first available platform
+  const initPlat = o.avail_platforms[0] || "claude";
+  $("#llm-platform").value = initPlat;
+  renderModels(initPlat);
+
   $("#light-hint").textContent = "— " + (o.light_stages || []).join(", ");
   $("#duration").placeholder = o.default_duration;
 });
@@ -235,6 +290,7 @@ $("#go").onclick = async () => {
     topic,
     platform: $("#platform").value,
     duration: parseInt($("#duration").value, 10) || OPTIONS.default_duration,
+    llm_platform: $("#llm-platform").value,
     model: $("#model").value,
     light_model: $("#light-model").value,
     tone: $("#tone").value, audience: $("#audience").value,
@@ -255,12 +311,42 @@ $("#go").onclick = async () => {
 function setRunHeader(brief){
   if (!brief) return;
   $("#run-topic").textContent = brief.topic;
-  $("#run-brief").textContent = `${brief.platform_label} · ${brief.duration}s · ${brief.model}`
+  $("#run-brief").textContent = `${brief.platform_label} · ${brief.duration}s · ${brief.llm_platform} · ${brief.model}`
     + (brief.light_model ? ` (bước phụ: ${brief.light_model})` : "")
     + (brief.dry_run ? " · chạy thử" : "");
+  // Mô tả từng bước nhắc lại đúng model/thời lượng của run này, nên chỉ dựng
+  // được khi brief đã về. Dựng một lần cho mỗi run.
+  if (!STEPS.length) buildStepper(brief);
+}
+
+/* Dọn sạch màn 2 để run sau không kế thừa steps/log/lỗi của run trước. */
+function resetRunView(){
+  SINCE = 0; RESUMED = false;
+  STEPS.length = 0;
+  $("#steps").innerHTML = "";
+  $("#log").textContent = "";
+  $("#run-progress").textContent = "";
+  $("#elapsed").textContent = "0:00";
+  $("#run-err").classList.add("hidden");
+  $("#run-err").classList.remove("stopped");
+}
+
+/* Về màn nhập chủ đề: bỏ hash để F5 không nhảy ngược lại run cũ, và cắt vòng
+   poll đang chạy để nó không kéo màn hình về lại khi run kết thúc. */
+function goToForm(){
+  NAV_GEN++;
+  clearInterval(TIMER);
+  RUN_ID = null;
+  resetRunView();
+  $("#form-err").classList.add("hidden");
+  history.replaceState(null, "", location.pathname + location.search);
+  show("screen-form");
+  refreshActive();  // thấy ngay run vừa rời khỏi, khỏi đợi hết nhịp 2s
 }
 
 function startWatching(startedAt){
+  NAV_GEN++;
+  resetRunView();
   show("screen-run");
   T0 = startedAt ? startedAt * 1000 : Date.now();
   clearInterval(TIMER);
@@ -281,7 +367,13 @@ $("#stop-btn").onclick = async () => {
   await fetch("/api/stop", {method:"POST", headers:{"Content-Type":"application/json"},
                             body: JSON.stringify({id: RUN_ID})});
 };
-function showFormErr(msg){ const b = $("#form-err"); b.textContent = msg; b.classList.remove("hidden"); }
+function showFormErr(msg){
+  const b = $("#form-err");
+  b.textContent = msg;
+  b.classList.remove("hidden");
+  // Ô lỗi nằm đầu form; khi bấm từ danh sách cuối trang thì phải kéo lên mới thấy.
+  if (b.scrollIntoView) b.scrollIntoView({behavior: "smooth", block: "center"});
+}
 
 /* Mở lại một lần chạy từ URL (#run/<id>) — F5 giữa chừng không mất tiến trình. */
 (function resume(){
@@ -291,9 +383,11 @@ function showFormErr(msg){ const b = $("#form-err"); b.textContent = msg; b.clas
     const url = ref.startsWith("n:")
       ? "/api/result?page_id=" + encodeURIComponent(ref.slice(2))
       : "/api/result?dir=" + encodeURIComponent(ref.replace(/^l:/, ""));
+    const gen = NAV_GEN;
     fetch(url)
       .then(r => r.ok ? r.json() : null)
-      .then(d => d && showResult(d, parseInt(past[2] || "0", 10)));
+      // Người dùng có thể đã bấm "Chạy mới" trong lúc fetch này còn đang bay.
+      .then(d => { if (d && gen === NAV_GEN) showResult(d, parseInt(past[2] || "0", 10)); });
     return;
   }
   const m = location.hash.match(/^#run\/([0-9a-f]+)$/);
@@ -302,60 +396,199 @@ function showFormErr(msg){ const b = $("#form-err"); b.textContent = msg; b.clas
   startWatching();
 })();
 
-fetch("/api/runs").then(r => r.json()).then(({runs}) => {
-  if (!runs?.length) return;
-  const box = $("#past-list");
-  let currentDate = null;
-  runs.forEach(r => {
-    if (r.date !== currentDate){ currentDate = r.date; box.append(el("div","daygroup", r.date)); }
-    const d = el("div","past-item");
-    const left = el("div");
-    left.append(el("div","t", r.title || r.topic));
-    left.append(el("div","m",
-      [r.topic, r.platform, r.duration ? r.duration + "s" : null].filter(Boolean).join(" · ")));
-    d.append(left, el("div","m", (r.started || "") + " · Xem →"));
-    d.onclick = async () => {
-      const res = await fetch(r.page_id
-        ? "/api/result?page_id=" + encodeURIComponent(r.page_id)
-        : "/api/result?dir=" + encodeURIComponent(r.dir));
-      if (res.ok) showResult(await res.json());
-    };
-    box.append(d);
-  });
-  $("#past").classList.remove("hidden");
-});
+function refreshPast(){
+  return fetch("/api/runs").then(r => r.json()).then(({runs}) => {
+    const box = $("#past-list");
+    box.innerHTML = "";  // hàm này gọi lại nhiều lần, không được cộng dồn
+    if (!runs?.length){ $("#past").classList.add("hidden"); return; }
+    let currentDate = null;
+    runs.forEach(r => {
+      if (r.date !== currentDate){ currentDate = r.date; box.append(el("div","daygroup", r.date)); }
+      const d = el("div","past-item");
+      const left = el("div");
+      left.append(el("div","t", r.title || r.topic));
+      left.append(el("div","m",
+        [r.topic, r.platform, r.duration ? r.duration + "s" : null].filter(Boolean).join(" · ")));
+      d.append(left, el("div","m", (r.started || "") + " · Xem →"));
+      d.onclick = async () => {
+        const gen = ++NAV_GEN;  // click sau thắng click trước, và thua "Chạy mới"
+        // Mọi nhánh hỏng đều phải nói ra. Nuốt lỗi ở đây thì người dùng chỉ thấy
+        // "bấm không lên gì" và không có cách nào biết vì sao.
+        try {
+          const res = await fetch(r.page_id
+            ? "/api/result?page_id=" + encodeURIComponent(r.page_id)
+            : "/api/result?dir=" + encodeURIComponent(r.dir));
+          if (!res.ok){
+            const body = await res.json().catch(() => ({}));
+            showFormErr(body.error || `Không mở được lần chạy này (HTTP ${res.status}).`);
+            return;
+          }
+          const data = await res.json();
+          if (gen === NAV_GEN) showResult(data);
+        } catch (exc) {
+          showFormErr("Không mở được lần chạy này: " + (exc && exc.message || exc));
+        }
+      };
+      box.append(d);
+    });
+    $("#past").classList.remove("hidden");
+  }).catch(() => {});
+}
+
+/* Danh sách run đang chạy. Nguồn là RUNS trong server chứ không phải Notion, nên
+   một run tự rời danh sách này ngay khi xong — đúng lúc nó xuất hiện ở "Lần chạy
+   trước". Không cần xoá tay ở đâu cả. */
+let ACTIVE_COUNT = 0;
+function refreshActive(){
+  return fetch("/api/active").then(r => r.json()).then(({runs}) => {
+    runs = runs || [];
+    const box = $("#active-list");
+    box.innerHTML = "";
+    runs.forEach(r => {
+      const step = r.step ? `${r.step.name} (${r.step.index}/${r.step.total})`
+                          : "đang khởi động…";
+      const d = el("div","past-item");
+      const left = el("div");
+      left.append(el("div","t", r.topic || "(chưa có chủ đề)"));
+      left.append(el("div","m",
+        [r.platform, r.duration ? r.duration + "s" : null,
+         r.dry_run ? "chạy thử" : null, step].filter(Boolean).join(" · ")));
+      d.append(left, el("div","running-badge", "Đang chạy · " + (r.started || "")));
+      d.onclick = () => openRun(r.id, r.started_at);
+      box.append(d);
+    });
+    $("#active").classList.toggle("hidden", runs.length === 0);
+    // Vừa có run kết thúc: nó đã lên Notion nên nạp lại lịch sử để thấy ngay.
+    if (runs.length < ACTIVE_COUNT) refreshPast();
+    ACTIVE_COUNT = runs.length;
+  }).catch(() => {});
+}
+
+/* Mở lại log trực tiếp của một run đang chạy. */
+function openRun(id, startedAt){
+  RUN_ID = id;
+  location.hash = "run/" + id;
+  startWatching(startedAt);
+}
+
+refreshPast();
+refreshActive();
+// Chỉ hỏi khi đang đứng ở màn nhập chủ đề — các màn khác đã có poll riêng.
+setInterval(() => {
+  if (!$("#screen-form").classList.contains("hidden")) refreshActive();
+}, 2000);
 
 /* ---------- màn 2 ---------- */
-function stepNode(ev){
-  const li = el("li", "active");
-  li.append(el("div","dot",String(ev.index)));
-  const box = el("div");
-  box.append(el("div","stepname", `${ev.name} (${ev.index}/${ev.total})`));
-  box.append(el("div","calls"));
-  li.append(box);
-  return li;
+/* Toàn bộ pipeline được dựng sẵn ngay khi mở màn, các bước chưa tới ở trạng thái
+   khoá. Nhờ vậy người dùng thấy trước sẽ có những gì thay vì nhìn khoảng trắng
+   cho tới khi bước đầu tiên kịp in ra stdout. `key` khớp với tên bước mà
+   pipeline.py in ("[1/3] Research..."), nên đổi bên đó phải sửa cả ở đây. */
+const STEP_PLAN = [
+  { key: "__init__", title: "Khởi tạo agent",
+    desc: b => `Nạp brief, dựng agent và kết nối ${b.model || "model"}` },
+  { key: "Research", title: "Nghiên cứu chủ đề",
+    desc: b => `Tìm thông tin có nguồn bằng ${b.model || "model"}, chấm độ tin cậy từng ý` },
+  { key: "Script", title: "Dựng kịch bản",
+    desc: b => `Chia phân đoạn và viết lời thoại khớp ngân sách ${b.duration ?? "—"} giây` },
+  { key: "Metadata", title: "Sinh metadata đăng bài",
+    desc: b => `Rút tiêu đề, mô tả và hashtag cho ${b.platform_label || "nền tảng đã chọn"}` },
+];
+
+// Tên stage kỹ thuật trong log -> câu người thường đọc được.
+const SUBSTAGE_TEXT = {
+  "research.search": "Tìm kiếm web và thu thập nguồn",
+  "research.structure": "Sắp xếp thành ghi chú có nguồn",
+  "script": "Viết lời thoại và gợi ý hình ảnh",
+  "metadata": "Sinh tiêu đề, mô tả và hashtag",
+};
+
+const DOT_FOR = { done: "✓", failed: "✕", locked: "🔒" };
+
+function buildStepper(brief){
+  const ul = $("#steps");
+  ul.innerHTML = "";
+  STEPS.length = 0;
+  STEP_PLAN.forEach((s, i) => {
+    const li = el("li", "locked");
+    li.dataset.key = s.key;
+    li.dataset.num = String(i + 1);
+    li.append(el("div", "dot", DOT_FOR.locked));
+    const box = el("div");
+    box.append(el("div", "stepname", s.title));
+    box.append(el("div", "stepdesc", s.desc(brief || {})));
+    box.append(el("div", "calls"));
+    li.append(box);
+    ul.append(li);
+    STEPS.push(li);
+  });
+  setStepState(STEPS[0], "done");  // agent đã dựng xong thì mới có log để đọc
+  updateProgress();
+}
+
+function setStepState(li, state){
+  if (!li) return;
+  li.classList.remove("locked", "active", "done", "failed");
+  li.classList.add(state);
+  // Bước đang chạy hiện số thứ tự trong vòng tròn nhấp nháy; các trạng thái
+  // khác dùng ký hiệu tĩnh.
+  li.querySelector(".dot").textContent =
+    state === "active" ? li.dataset.num : DOT_FOR[state];
+}
+
+function stepByKey(key){
+  return STEPS.find(li => li.dataset.key === key);
+}
+
+function activeStep(){
+  return STEPS.find(li => li.classList.contains("active"));
+}
+
+function updateProgress(){
+  const done = STEPS.filter(li => li.classList.contains("done")).length;
+  $("#run-progress").textContent = STEPS.length ? `${done}/${STEPS.length} bước xong` : "";
+}
+
+/* Mở khoá tới bước `key`: mọi bước trước nó coi như xong. */
+function enterStep(key){
+  const target = stepByKey(key);
+  if (!target) return;
+  for (const li of STEPS) {
+    if (li === target) break;
+    if (!li.classList.contains("failed")) setStepState(li, "done");
+  }
+  setStepState(target, "active");
+  updateProgress();
+}
+
+function finishAllSteps(){
+  STEPS.forEach(li => { if (!li.classList.contains("failed")) setStepState(li, "done"); });
+  updateProgress();
+}
+
+function failActiveStep(){
+  setStepState(activeStep(), "failed");
+  updateProgress();
+}
+
+function addSubLine(text){
+  const box = (activeStep() || STEPS[STEPS.length - 1])?.querySelector(".calls");
+  if (!box) return;
+  box.append(el("div", null, text));
 }
 
 function render(events){
   for (const ev of events){
     if (ev.type === "step"){
-      const prev = $("#steps").lastElementChild;
-      if (prev){ prev.classList.remove("active"); prev.classList.add("done");
-                 prev.querySelector(".dot").textContent = "✓"; }
-      const li = stepNode(ev); STEPS.push(li); $("#steps").append(li);
+      enterStep(ev.name);
     } else if (ev.type === "usage"){
-      const box = $("#steps").lastElementChild?.querySelector(".calls");
-      if (box){
-        const cost = ev.cost_usd == null ? "" : ` · $${ev.cost_usd.toFixed(4)}`;
-        const model = ev.model ? ` · ${ev.model}` : "";
-        box.append(el("div", null,
-          `${ev.stage} — ${fmtInt(ev.input_tokens)} vào / ${fmtInt(ev.output_tokens)} ra${cost}${model}`));
-      }
+      // Bỏ hẳn phần tiền và token: ở đây chỉ cần biết máy vừa làm xong việc gì.
+      const model = ev.model ? ` · ${ev.model}` : "";
+      addSubLine("✓ " + (SUBSTAGE_TEXT[ev.stage] || ev.stage) + model);
     } else if (ev.type === "retry"){
-      const box = $("#steps").lastElementChild?.querySelector(".calls");
-      if (box) box.append(el("div", null, "↻ " + ev.message));
+      addSubLine("↻ " + ev.message);
     } else if (ev.type === "error"){
       const b = $("#run-err"); b.textContent = ev.message; b.classList.remove("hidden");
+      failActiveStep();
     }
     if (ev.message || ev.type === "step")
       $("#log").textContent += (ev.message || ev.name) + "\n";
@@ -363,16 +596,14 @@ function render(events){
 }
 
 async function poll(){
+  const gen = NAV_GEN;
   const r = await fetch(`/api/status?id=${RUN_ID}&since=${SINCE}`);
   const s = await r.json();
+  if (gen !== NAV_GEN) return;  // đã rời màn hình hoặc đã bắt đầu run khác
   SINCE = s.total_events;
   setRunHeader(s.brief);
   if (s.started_at && !RESUMED){ RESUMED = true; T0 = s.started_at * 1000; }
   render(s.events);
-
-  const spent = s.events.filter(e => e.type === "usage")
-                        .reduce((a,e) => a + (e.cost_usd || 0), 0);
-  if (spent) $("#running-cost").textContent = `quy đổi $${spent.toFixed(4)}`;
 
   if (s.status === "running"){ setTimeout(poll, 700); return; }
   clearInterval(TIMER);
@@ -383,13 +614,10 @@ async function poll(){
     b.textContent = s.error || "Pipeline dừng giữa chừng.";
     b.classList.toggle("stopped", s.status === "stopped");
     b.classList.remove("hidden");
-    $("#run-actions").classList.remove("hidden");
-    STEPS.forEach(li => li.classList.remove("active"));
+    failActiveStep();  // bước đang dở là bước hỏng, đừng để nó nhấp nháy mãi
     return;
   }
-  const last = $("#steps").lastElementChild;
-  if (last){ last.classList.remove("active"); last.classList.add("done");
-             last.querySelector(".dot").textContent = "✓"; }
+  finishAllSteps();
 
   if (!s.result){
     // --dry-run chạy xong nhưng không lưu ở đâu nên không có gì để dựng.
@@ -398,7 +626,6 @@ async function poll(){
       || "Chạy thử xong. Dữ liệu giả không được lưu ở đâu nên không có kết quả để xem.";
     b.classList.add("stopped");
     b.classList.remove("hidden");
-    $("#run-actions").classList.remove("hidden");
     return;
   }
   showResult(s.result);

@@ -91,15 +91,34 @@ def _text(content: Optional[str]) -> List[dict]:
     content = (content or "").strip()
     if not content:
         return []
-    return [{"type": "text", "text": {"content": content[:MAX_TEXT_LEN]}}]
+    return _text_chunks(content)[:1]
+
+
+def _utf16_len(ch: str) -> int:
+    """Notion đếm content.length theo UTF-16 code unit; ký tự ngoài BMP (emoji...) chiếm 2."""
+    return 2 if ord(ch) > 0xFFFF else 1
 
 
 def _text_chunks(content: str) -> List[dict]:
-    """Cắt chuỗi dài thành nhiều rich text object — dùng cho JSON gốc, không cắt cụt."""
-    return [
-        {"type": "text", "text": {"content": content[i:i + MAX_TEXT_LEN]}}
-        for i in range(0, len(content), MAX_TEXT_LEN)
-    ]
+    """Cắt chuỗi dài thành nhiều rich text object — dùng cho JSON gốc, không cắt cụt.
+
+    Cắt theo độ dài UTF-16 (đơn vị Notion dùng để giới hạn 2000), không phải
+    số ký tự Python — nếu không, chunk chứa emoji có thể vượt giới hạn dù
+    len() Python báo đúng 2000.
+    """
+    chunks: List[dict] = []
+    buf: List[str] = []
+    length = 0
+    for ch in content:
+        ch_len = _utf16_len(ch)
+        if length + ch_len > MAX_TEXT_LEN and buf:
+            chunks.append({"type": "text", "text": {"content": "".join(buf)}})
+            buf, length = [], 0
+        buf.append(ch)
+        length += ch_len
+    if buf:
+        chunks.append({"type": "text", "text": {"content": "".join(buf)}})
+    return chunks
 
 
 def _plain_text(block: dict) -> str:
