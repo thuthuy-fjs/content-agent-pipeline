@@ -62,6 +62,7 @@ export async function callGemini(params: CreateParams, secrets: ProviderSecrets)
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: params.signal,
       });
     } catch (exc) {
       throw providerError(`Gemini: không kết nối được: ${(exc as Error).message}`);
@@ -70,6 +71,7 @@ export async function callGemini(params: CreateParams, secrets: ProviderSecrets)
     if (!res.ok) {
       if ((res.status === 429 || res.status === 503) && attempt < maxRetries - 1) {
         await sleep(2 ** attempt * 1000);
+        if (params.signal?.aborted) throw providerError(`Gemini: request bị huỷ.`);
         continue;
       }
       const err = await res.text().catch(() => "");

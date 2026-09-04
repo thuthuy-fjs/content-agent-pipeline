@@ -13,3 +13,9 @@ OPENAI_API_KEY=
 GEMINI_API_KEY=
 NOTION_TOKEN=
 NOTION_DATA_SOURCE_ID=
+
+# Giới hạn tài nguyên (tuỳ chọn)
+SINGLE_RUN_PER_VISIT=
+
+# Debug (tuỳ chọn)
+SHOW_PROVIDER_ERRORS=

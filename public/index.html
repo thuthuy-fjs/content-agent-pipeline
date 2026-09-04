@@ -1,900 +1,1696 @@
 <!doctype html>
 <html lang="vi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Content Agent</title>
-<style>
-:root{
-  --bg:#f6f7f9; --panel:#fff; --ink:#16181d; --muted:#6b7280; --line:#e4e7ec;
-  --accent:#2f6df6; --accent-ink:#fff; --ok:#0f9960; --warn:#b7791f; --err:#d64545;
-  --chip:#eef2f7; --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.06);
-  --p1:#d63c47; --p2:#b5701a; --p3:#0e8f96; --p4:#7a52c7;
-}
-@media (prefers-color-scheme:dark){
-  :root{
-    --bg:#101216; --panel:#171a20; --ink:#e8eaee; --muted:#98a1b0; --line:#262b34;
-    --accent:#5b8cff; --accent-ink:#0b0d11; --ok:#3ec98a; --warn:#e0b155; --err:#ff7a7a;
-    --chip:#1e232c; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
-    --p1:#ff8087; --p2:#e5ac57; --p3:#4fd1d9; --p4:#b18cf0;
-  }
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans",sans-serif}
-.wrap{max-width:920px;margin:0 auto;padding:32px 20px 72px}
-h1{font-size:22px;margin:0 0 4px}
-h2{font-size:16px;margin:0 0 12px}
-.sub{color:var(--muted);margin:0 0 24px;font-size:14px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
-  padding:22px;box-shadow:var(--shadow)}
-.row{display:grid;gap:16px;grid-template-columns:1fr 1fr}
-@media (max-width:640px){.row{grid-template-columns:1fr}}
-label{display:block;font-weight:600;font-size:13px;margin:0 0 6px}
-.hint{font-weight:400;color:var(--muted)}
-input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);
-  border-radius:9px;background:var(--bg);color:var(--ink);font:inherit}
-textarea{resize:vertical;min-height:76px}
-input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
-.field{margin-bottom:16px}
-.dur{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
-.dur select{width:auto}
-button{font:inherit;font-weight:600;border-radius:9px;border:1px solid transparent;
-  padding:11px 18px;cursor:pointer}
-.primary{background:var(--accent);color:var(--accent-ink);width:100%}
-.primary:disabled{opacity:.55;cursor:default}
-.ghost{background:transparent;color:var(--muted);border-color:var(--line)}
-details summary{cursor:pointer;color:var(--muted);font-size:14px;margin-bottom:12px}
-.check{display:flex;align-items:center;gap:9px;font-size:14px}
-.check input{width:auto}
-.err{background:color-mix(in srgb,var(--err) 12%,transparent);border:1px solid var(--err);
-  color:var(--err);padding:12px 14px;border-radius:9px;margin-bottom:16px;font-size:14px}
-.err.stopped{background:var(--chip);border-color:var(--line);color:var(--muted)}
-/* tiến trình */
-.steps{list-style:none;margin:0 0 20px;padding:0}
-.steps li{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--line)}
-.steps li:last-child{border-bottom:0}
-.dot{width:22px;height:22px;border-radius:50%;border:2px solid var(--line);flex:0 0 auto;
-  display:grid;place-items:center;font-size:12px;color:var(--muted);margin-top:1px}
-li.active .dot{border-color:var(--accent);color:var(--accent);animation:pulse 1.3s ease-in-out infinite}
-li.done .dot{border-color:var(--ok);background:var(--ok);color:var(--panel)}
-li.locked .dot{font-size:10px;opacity:.55}
-li.failed .dot{border-color:var(--err);color:var(--err)}
-@keyframes pulse{50%{opacity:.35}}
-@media (prefers-reduced-motion:reduce){li.active .dot{animation:none}}
-.stepname{font-weight:600}
-li.locked .stepname{color:var(--muted);font-weight:500}
-li.active .stepname{color:var(--accent)}
-.stepdesc{font-size:13px;color:var(--muted);margin-top:2px}
-.calls{margin-top:6px;font-size:13px;color:var(--muted)}
-.calls div{padding:1px 0}
-.bar{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);
-  border-top:1px solid var(--line);padding-top:14px;font-variant-numeric:tabular-nums}
-pre.log{background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:12px;
-  font-size:12.5px;max-height:220px;overflow:auto;margin:0;white-space:pre-wrap}
-/* kết quả */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:22px}
-.stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
-.stat b{display:block;font-size:20px;font-variant-numeric:tabular-nums;margin-bottom:2px}
-.stat span{font-size:12.5px;color:var(--muted)}
-.tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
-.tabs button{background:var(--chip);color:var(--muted);border:1px solid transparent;padding:8px 14px;font-size:14px}
-.tabs button[aria-selected=true]{background:var(--accent);color:var(--accent-ink)}
-.sec{border-left:3px solid var(--accent);padding:2px 0 2px 14px;margin-bottom:22px}
-.sec .time{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
-.sec h3{margin:2px 0 4px;font-size:15px}
-.sec .goal{font-size:13px;color:var(--muted);margin:0 0 10px}
-.sec p{margin:0 0 8px}
-.sec .visual{font-size:13.5px;color:var(--muted);background:var(--chip);
-  padding:9px 11px;border-radius:8px;margin:0}
-.chips{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 18px}
-.chip{background:var(--chip);border-radius:999px;padding:5px 11px;font-size:13px}
-ul.plain{margin:0 0 18px;padding-left:20px}
-ul.plain li{margin-bottom:6px}
-.fact{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
-.fact p{margin:0 0 8px}
-.badge{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;
-  padding:2px 8px;border-radius:999px;margin-right:8px}
-.b-high{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
-.b-medium{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
-.b-low{background:color-mix(in srgb,var(--err) 16%,transparent);color:var(--err)}
-a{color:var(--accent);word-break:break-all}
-.warnbox{border:1px solid var(--warn);color:var(--warn);border-radius:9px;padding:11px 13px;
-  font-size:13.5px;margin-bottom:18px;background:color-mix(in srgb,var(--warn) 10%,transparent)}
-.head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
-.head button{white-space:nowrap}
-.daygroup{font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;
-  letter-spacing:.04em;margin:18px 0 8px}
-.daygroup:first-child{margin-top:0}
-.past-item{display:flex;justify-content:space-between;align-items:center;gap:14px;
-  background:var(--panel);border:1px solid var(--line);border-radius:10px;
-  padding:12px 14px;margin-bottom:8px;cursor:pointer}
-.past-item:hover{border-color:var(--accent)}
-.past-item .t{font-weight:600;font-size:14px}
-.past-item .m{font-size:12.5px;color:var(--muted)}
-.running-badge{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
-  color:var(--accent);font-size:12.5px;font-weight:600}
-.running-badge::before{content:"";width:7px;height:7px;border-radius:999px;
-  background:var(--accent);animation:pulse 1.2s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
-@media (prefers-reduced-motion:reduce){.running-badge::before{animation:none}}
-.past-item .m{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-.pchip{border-radius:999px;padding:2px 9px;font-size:12px;font-weight:600;white-space:nowrap;
-  background:var(--chip);color:var(--muted)}
-.pchip.p1{background:color-mix(in srgb,var(--p1) 16%,transparent);color:var(--p1)}
-.pchip.p2{background:color-mix(in srgb,var(--p2) 16%,transparent);color:var(--p2)}
-.pchip.p3{background:color-mix(in srgb,var(--p3) 16%,transparent);color:var(--p3)}
-.pchip.p4{background:color-mix(in srgb,var(--p4) 16%,transparent);color:var(--p4)}
-.past-item .when{font-variant-numeric:tabular-nums}
-.filters{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px}
-.filters .field{margin:0;min-width:190px}
-.filters input,.filters select{height:42px}
-.pager{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px}
-.pager .m{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
-.empty{color:var(--muted);font-size:14px;text-align:center;padding:28px 0}
-.hidden{display:none!important}
-</style>
-</head>
-<body>
-<div class="wrap">
-
-<!-- MÀN 1: NHẬP BRIEF -->
-<section id="screen-form">
-  <div class="head">
-    <div>
-      <h1>Content Agent</h1>
-      <p class="sub" style="margin:0">Một chủ đề → ghi chú nghiên cứu có nguồn, kịch bản theo ngân sách thời gian, và metadata đăng bài.</p>
-    </div>
-    <button id="to-history" class="ghost">Lần chạy trước →</button>
-  </div>
-  <div class="card">
-    <div id="form-err" class="err hidden"></div>
-    <div class="field">
-      <label for="topic">Chủ đề video</label>
-      <textarea id="topic" placeholder="Ví dụ: Vì sao mèo sợ dưa chuột?"></textarea>
-    </div>
-    <div class="row">
-      <div class="field">
-        <label for="platform">Nền tảng</label>
-        <select id="platform"></select>
-      </div>
-      <div class="field">
-        <label for="duration">Thời lượng <span class="hint" id="duration-hint"></span></label>
-        <div class="dur">
-          <input id="duration" type="number" min="5" max="1800" step="1" placeholder="45">
-          <select id="duration-unit" aria-label="Đơn vị thời lượng"></select>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Content Agent</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --panel: #fff;
+        --ink: #16181d;
+        --muted: #6b7280;
+        --line: #e4e7ec;
+        --accent: #2f6df6;
+        --accent-ink: #fff;
+        --ok: #0f9960;
+        --warn: #b7791f;
+        --err: #d64545;
+        --chip: #eef2f7;
+        --shadow:
+          0 1px 2px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(16, 24, 40, 0.06);
+        --p1: #d63c47;
+        --p2: #b5701a;
+        --p3: #0e8f96;
+        --p4: #7a52c7;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #101216;
+          --panel: #171a20;
+          --ink: #e8eaee;
+          --muted: #98a1b0;
+          --line: #262b34;
+          --accent: #5b8cff;
+          --accent-ink: #0b0d11;
+          --ok: #3ec98a;
+          --warn: #e0b155;
+          --err: #ff7a7a;
+          --chip: #1e232c;
+          --shadow:
+            0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+          --p1: #ff8087;
+          --p2: #e5ac57;
+          --p3: #4fd1d9;
+          --p4: #b18cf0;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          15px/1.55 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          "Noto Sans",
+          sans-serif;
+      }
+      .wrap {
+        max-width: 920px;
+        margin: 0 auto;
+        padding: 32px 20px 72px;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 4px;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 0 0 12px;
+      }
+      .sub {
+        color: var(--muted);
+        margin: 0 0 24px;
+        font-size: 14px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 22px;
+        box-shadow: var(--shadow);
+      }
+      .row {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: 1fr 1fr;
+      }
+      @media (max-width: 640px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        font-size: 13px;
+        margin: 0 0 6px;
+      }
+      .hint {
+        font-weight: 400;
+        color: var(--muted);
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--bg);
+        color: var(--ink);
+        font: inherit;
+      }
+      textarea {
+        resize: vertical;
+        min-height: 76px;
+      }
+      input:focus,
+      select:focus,
+      textarea:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: -1px;
+      }
+      .field {
+        margin-bottom: 16px;
+      }
+      .dur {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: center;
+      }
+      .dur select {
+        width: auto;
+      }
+      button {
+        font: inherit;
+        font-weight: 600;
+        border-radius: 9px;
+        border: 1px solid transparent;
+        padding: 11px 18px;
+        cursor: pointer;
+      }
+      .primary {
+        background: var(--accent);
+        color: var(--accent-ink);
+        width: 100%;
+      }
+      .primary:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      .ghost {
+        background: transparent;
+        color: var(--muted);
+        border-color: var(--line);
+      }
+      details summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 14px;
+        margin-bottom: 12px;
+      }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 14px;
+      }
+      .check input {
+        width: auto;
+      }
+      .err {
+        background: color-mix(in srgb, var(--err) 12%, transparent);
+        border: 1px solid var(--err);
+        color: var(--err);
+        padding: 12px 14px;
+        border-radius: 9px;
+        margin-bottom: 16px;
+        font-size: 14px;
+      }
+      .err.stopped {
+        background: var(--chip);
+        border-color: var(--line);
+        color: var(--muted);
+      }
+      .notice {
+        background: var(--chip);
+        border: 1px solid var(--line);
+        color: var(--muted);
+        padding: 12px 14px;
+        border-radius: 9px;
+        font-size: 14px;
+        text-align: center;
+      }
+      /* tiến trình */
+      .steps {
+        list-style: none;
+        margin: 0 0 20px;
+        padding: 0;
+      }
+      .steps li {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .steps li:last-child {
+        border-bottom: 0;
+      }
+      .dot {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 2px solid var(--line);
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 1px;
+      }
+      li.active .dot {
+        border-color: var(--accent);
+        color: var(--accent);
+        animation: pulse 1.3s ease-in-out infinite;
+      }
+      li.done .dot {
+        border-color: var(--ok);
+        background: var(--ok);
+        color: var(--panel);
+      }
+      li.locked .dot {
+        font-size: 10px;
+        opacity: 0.55;
+      }
+      li.failed .dot {
+        border-color: var(--err);
+        color: var(--err);
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.35;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        li.active .dot {
+          animation: none;
+        }
+      }
+      .stepname {
+        font-weight: 600;
+      }
+      li.locked .stepname {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      li.active .stepname {
+        color: var(--accent);
+      }
+      .stepdesc {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .calls {
+        margin-top: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .calls div {
+        padding: 1px 0;
+      }
+      .bar {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+        padding-top: 14px;
+        font-variant-numeric: tabular-nums;
+      }
+      pre.log {
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 12px;
+        font-size: 12.5px;
+        max-height: 220px;
+        overflow: auto;
+        margin: 0;
+        white-space: pre-wrap;
+      }
+      /* kết quả */
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+        margin-bottom: 22px;
+      }
+      .stat {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      .stat b {
+        display: block;
+        font-size: 20px;
+        font-variant-numeric: tabular-nums;
+        margin-bottom: 2px;
+      }
+      .stat span {
+        font-size: 12.5px;
+        color: var(--muted);
+      }
+      .tabs {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+      }
+      .tabs button {
+        background: var(--chip);
+        color: var(--muted);
+        border: 1px solid transparent;
+        padding: 8px 14px;
+        font-size: 14px;
+      }
+      .tabs button[aria-selected="true"] {
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+      .sec {
+        border-left: 3px solid var(--accent);
+        padding: 2px 0 2px 14px;
+        margin-bottom: 22px;
+      }
+      .sec .time {
+        font-size: 12.5px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .sec h3 {
+        margin: 2px 0 4px;
+        font-size: 15px;
+      }
+      .sec .goal {
+        font-size: 13px;
+        color: var(--muted);
+        margin: 0 0 10px;
+      }
+      .sec p {
+        margin: 0 0 8px;
+      }
+      .sec .visual {
+        font-size: 13.5px;
+        color: var(--muted);
+        background: var(--chip);
+        padding: 9px 11px;
+        border-radius: 8px;
+        margin: 0;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin: 0 0 18px;
+      }
+      .chip {
+        background: var(--chip);
+        border-radius: 999px;
+        padding: 5px 11px;
+        font-size: 13px;
+      }
+      ul.plain {
+        margin: 0 0 18px;
+        padding-left: 20px;
+      }
+      ul.plain li {
+        margin-bottom: 6px;
+      }
+      .fact {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+      }
+      .fact p {
+        margin: 0 0 8px;
+      }
+      .badge {
+        font-size: 11.5px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        padding: 2px 8px;
+        border-radius: 999px;
+        margin-right: 8px;
+      }
+      .b-high {
+        background: color-mix(in srgb, var(--ok) 18%, transparent);
+        color: var(--ok);
+      }
+      .b-medium {
+        background: color-mix(in srgb, var(--warn) 18%, transparent);
+        color: var(--warn);
+      }
+      .b-low {
+        background: color-mix(in srgb, var(--err) 16%, transparent);
+        color: var(--err);
+      }
+      a {
+        color: var(--accent);
+        word-break: break-all;
+      }
+      .warnbox {
+        border: 1px solid var(--warn);
+        color: var(--warn);
+        border-radius: 9px;
+        padding: 11px 13px;
+        font-size: 13.5px;
+        margin-bottom: 18px;
+        background: color-mix(in srgb, var(--warn) 10%, transparent);
+      }
+      .head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+      .head button {
+        white-space: nowrap;
+      }
+      .daygroup {
+        font-size: 12.5px;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin: 18px 0 8px;
+      }
+      .daygroup:first-child {
+        margin-top: 0;
+      }
+      .past-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 14px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 8px;
+        cursor: pointer;
+      }
+      .past-item:hover {
+        border-color: var(--accent);
+      }
+      .past-item .t {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .past-item .m {
+        font-size: 12.5px;
+        color: var(--muted);
+      }
+      .running-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+        color: var(--accent);
+        font-size: 12.5px;
+        font-weight: 600;
+      }
+      .running-badge::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--accent);
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.25;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .running-badge::before {
+          animation: none;
+        }
+      }
+      .past-item .m {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+      }
+      .pchip {
+        border-radius: 999px;
+        padding: 2px 9px;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+        background: var(--chip);
+        color: var(--muted);
+      }
+      .pchip.p1 {
+        background: color-mix(in srgb, var(--p1) 16%, transparent);
+        color: var(--p1);
+      }
+      .pchip.p2 {
+        background: color-mix(in srgb, var(--p2) 16%, transparent);
+        color: var(--p2);
+      }
+      .pchip.p3 {
+        background: color-mix(in srgb, var(--p3) 16%, transparent);
+        color: var(--p3);
+      }
+      .pchip.p4 {
+        background: color-mix(in srgb, var(--p4) 16%, transparent);
+        color: var(--p4);
+      }
+      .past-item .when {
+        font-variant-numeric: tabular-nums;
+      }
+      .filters {
+        display: flex;
+        gap: 12px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+      }
+      .filters .field {
+        margin: 0;
+        min-width: 190px;
+      }
+      .filters input,
+      .filters select {
+        height: 42px;
+      }
+      .pager {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-top: 16px;
+      }
+      .pager .m {
+        font-size: 13px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .empty {
+        color: var(--muted);
+        font-size: 14px;
+        text-align: center;
+        padding: 28px 0;
+      }
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <!-- MÀN 1: NHẬP BRIEF -->
+      <section id="screen-form">
+        <div class="head">
+          <div>
+            <h1>Content Agent</h1>
+            <p class="sub" style="margin: 0">
+              Một chủ đề → ghi chú nghiên cứu có nguồn, kịch bản theo ngân sách
+              thời gian, và metadata đăng bài.
+            </p>
+          </div>
+          <button id="to-history" class="ghost">Lần chạy trước →</button>
         </div>
-      </div>
-    </div>
-    <div class="row" id="llm-platform-row" class="hidden">
-      <div class="field">
-        <label for="llm-platform">Nền tảng LLM</label>
-        <select id="llm-platform"></select>
-      </div>
-      <div><!-- Spacer --></div>
-    </div>
-    <div class="row">
-      <div class="field">
-        <label for="model">Model chính <span class="hint">— research &amp; kịch bản</span></label>
-        <select id="model"></select>
-      </div>
-      <div class="field">
-        <label for="light-model">Model bước phụ <span class="hint" id="light-hint"></span></label>
-        <select id="light-model"></select>
-      </div>
-    </div>
-    <details>
-      <summary>Tuỳ chọn nâng cao</summary>
-      <div class="row">
-        <div class="field">
-          <label for="tone">Tone</label>
-          <input id="tone" placeholder="giáo dục, gần gũi, hơi hài hước">
+        <div class="card">
+          <div id="form-err" class="err hidden"></div>
+          <div class="field">
+            <label for="topic">Chủ đề video</label>
+            <textarea
+              id="topic"
+              placeholder="Ví dụ: Vì sao mèo sợ dưa chuột?"
+            ></textarea>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="platform">Nền tảng</label>
+              <select id="platform"></select>
+            </div>
+            <div class="field">
+              <label for="duration"
+                >Thời lượng <span class="hint" id="duration-hint"></span
+              ></label>
+              <div class="dur">
+                <input
+                  id="duration"
+                  type="number"
+                  min="5"
+                  max="1800"
+                  step="1"
+                  placeholder="45"
+                />
+                <select
+                  id="duration-unit"
+                  aria-label="Đơn vị thời lượng"
+                ></select>
+              </div>
+            </div>
+          </div>
+          <div class="row" id="llm-platform-row" class="hidden">
+            <div class="field">
+              <label for="llm-platform">Nền tảng LLM</label>
+              <select id="llm-platform"></select>
+            </div>
+            <div><!-- Spacer --></div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="model"
+                >Model chính
+                <span class="hint">— research &amp; kịch bản</span></label
+              >
+              <select id="model"></select>
+            </div>
+            <div class="field">
+              <label for="light-model"
+                >Model bước phụ <span class="hint" id="light-hint"></span
+              ></label>
+              <select id="light-model"></select>
+            </div>
+          </div>
+          <details>
+            <summary>Tuỳ chọn nâng cao</summary>
+            <div class="row">
+              <div class="field">
+                <label for="tone">Tone</label>
+                <input
+                  id="tone"
+                  placeholder="giáo dục, gần gũi, hơi hài hước"
+                />
+              </div>
+              <div class="field">
+                <label for="audience">Khán giả</label>
+                <input
+                  id="audience"
+                  placeholder="khán giả phổ thông Việt Nam, 18-35 tuổi"
+                />
+              </div>
+            </div>
+            <div class="field check">
+              <input id="dry" type="checkbox" />
+              <label for="dry" style="margin: 0"
+                >Chạy thử (dữ liệu giả, không gọi model)</label
+              >
+            </div>
+          </details>
+          <button id="go" class="primary">Chạy pipeline</button>
+          <div id="quota-note" class="notice hidden"></div>
         </div>
-        <div class="field">
-          <label for="audience">Khán giả</label>
-          <input id="audience" placeholder="khán giả phổ thông Việt Nam, 18-35 tuổi">
+        <div id="active" class="hidden" style="margin-top: 24px">
+          <h2 style="margin-bottom: 10px">Đang chạy</h2>
+          <div id="active-list"></div>
         </div>
-      </div>
-      <div class="field check">
-        <input id="dry" type="checkbox">
-        <label for="dry" style="margin:0">Chạy thử (dữ liệu giả, không gọi model)</label>
-      </div>
-    </details>
-    <button id="go" class="primary">Chạy pipeline</button>
-  </div>
-  <div id="active" class="hidden" style="margin-top:24px">
-    <h2 style="margin-bottom:10px">Đang chạy</h2>
-    <div id="active-list"></div>
-  </div>
-</section>
+      </section>
 
-<!-- MÀN LỊCH SỬ: lọc theo ngày/nền tảng, 20 bản ghi mỗi trang -->
-<section id="screen-history" class="hidden">
-  <div class="head">
-    <div>
-      <h1>Lần chạy trước</h1>
-      <p class="sub" id="hist-sub" style="margin:0"></p>
-    </div>
-    <button class="ghost" onclick="goToForm()">← Quay lại</button>
-  </div>
-  <div class="filters">
-    <div class="field">
-      <label for="hist-date">Ngày chạy <span class="hint">— giờ VN (UTC+7)</span></label>
-      <input id="hist-date" type="date">
-    </div>
-    <div class="field">
-      <label for="hist-platform">Nền tảng</label>
-      <select id="hist-platform"></select>
-    </div>
-    <button id="hist-clear" class="ghost">Xoá lọc</button>
-  </div>
-  <div id="hist-list"></div>
-  <div id="hist-empty" class="empty hidden">Không có lần chạy nào khớp bộ lọc.</div>
-  <div class="pager hidden" id="hist-pager">
-    <button id="hist-prev" class="ghost">← Trang trước</button>
-    <span class="m" id="hist-page"></span>
-    <button id="hist-next" class="ghost">Trang sau →</button>
-  </div>
-</section>
+      <!-- MÀN LỊCH SỬ: lọc theo ngày/nền tảng, 20 bản ghi mỗi trang -->
+      <section id="screen-history" class="hidden">
+        <div class="head">
+          <div>
+            <h1>Lần chạy trước</h1>
+            <p class="sub" id="hist-sub" style="margin: 0"></p>
+          </div>
+          <button class="ghost" onclick="goToForm()">← Quay lại</button>
+        </div>
+        <div class="filters">
+          <div class="field">
+            <label for="hist-date"
+              >Ngày chạy <span class="hint">— giờ VN (UTC+7)</span></label
+            >
+            <input id="hist-date" type="date" />
+          </div>
+          <div class="field">
+            <label for="hist-platform">Nền tảng</label>
+            <select id="hist-platform"></select>
+          </div>
+          <button id="hist-clear" class="ghost">Xoá lọc</button>
+        </div>
+        <div id="hist-list"></div>
+        <div id="hist-empty" class="empty hidden">
+          Không có lần chạy nào khớp bộ lọc.
+        </div>
+        <div class="pager hidden" id="hist-pager">
+          <button id="hist-prev" class="ghost">← Trang trước</button>
+          <span class="m" id="hist-page"></span>
+          <button id="hist-next" class="ghost">Trang sau →</button>
+        </div>
+      </section>
 
-<!-- MÀN 2: TIẾN TRÌNH -->
-<section id="screen-run" class="hidden">
-  <div class="head">
-    <div>
-      <h1 id="run-topic"></h1>
-      <p class="sub" id="run-brief" style="margin:0"></p>
-    </div>
-    <div style="display:flex;gap:8px">
-      <button id="stop-btn" class="ghost hidden">Dừng</button>
-      <button id="back-btn" class="ghost" onclick="goToForm()"
-              title="Pipeline vẫn chạy tiếp; mở lại ở mục “Đang chạy”">← Quay lại</button>
-    </div>
-  </div>
-  <div class="card">
-    <div id="run-err" class="err hidden"></div>
-    <ul class="steps" id="steps"></ul>
-    <div class="bar"><span id="elapsed">0:00</span><span id="run-progress"></span></div>
-    <details style="margin-top:16px"><summary>Log thô</summary><pre class="log" id="log"></pre></details>
-  </div>
-</section>
+      <!-- MÀN 2: TIẾN TRÌNH -->
+      <section id="screen-run" class="hidden">
+        <div class="head">
+          <div>
+            <h1 id="run-topic"></h1>
+            <p class="sub" id="run-brief" style="margin: 0"></p>
+          </div>
+          <div style="display: flex; gap: 8px">
+            <button id="stop-btn" class="ghost hidden">Dừng</button>
+            <button
+              id="back-btn"
+              class="ghost"
+              onclick="goToForm()"
+              title="Pipeline vẫn chạy tiếp; mở lại ở mục “Đang chạy”"
+            >
+              ← Quay lại
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div id="run-err" class="err hidden"></div>
+          <ul class="steps" id="steps"></ul>
+          <div class="bar">
+            <span id="elapsed">0:00</span><span id="run-progress"></span>
+          </div>
+          <details id="log-details" class="hidden" style="margin-top: 16px">
+            <summary>Debug log</summary>
+            <pre class="log" id="log"></pre>
+          </details>
+        </div>
+      </section>
 
-<!-- MÀN 3: KẾT QUẢ -->
-<section id="screen-result" class="hidden">
-  <div class="head">
-    <div>
-      <h1 id="res-title"></h1>
-      <p class="sub" id="res-sub" style="margin:0"></p>
+      <!-- MÀN 3: KẾT QUẢ -->
+      <section id="screen-result" class="hidden">
+        <div class="head">
+          <div>
+            <h1 id="res-title"></h1>
+            <p class="sub" id="res-sub" style="margin: 0"></p>
+          </div>
+          <div style="display: flex; gap: 8px">
+            <button id="res-notion" class="ghost hidden">
+              Xem trên Notion
+            </button>
+            <button class="ghost" onclick="goBackFromResult()">
+              ← Quay lại
+            </button>
+          </div>
+        </div>
+        <div id="res-warn"></div>
+        <div class="stats" id="res-stats"></div>
+        <div class="tabs" id="tabs"></div>
+        <div class="card"><div id="tabbody"></div></div>
+      </section>
     </div>
-    <div style="display:flex;gap:8px">
-      <button id="res-notion" class="ghost hidden">Xem trên Notion</button>
-      <button class="ghost" onclick="goBackFromResult()">← Quay lại</button>
-    </div>
-  </div>
-  <div id="res-warn"></div>
-  <div class="stats" id="res-stats"></div>
-  <div class="tabs" id="tabs"></div>
-  <div class="card"><div id="tabbody"></div></div>
-</section>
-
-</div>
-<script>
-const $ = s => document.querySelector(s);
-const el = (t, cls, txt) => { const n = document.createElement(t);
-  if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
-const show = id => ["screen-form","screen-run","screen-history","screen-result"]
-  .forEach(s => $("#"+s).classList.toggle("hidden", s !== id));
-const mmss = s => Math.floor(s/60) + ":" + String(s%60).padStart(2,"0");
-/* Thời lượng luôn được lưu và truyền đi bằng giây; chỉ chỗ hiển thị mới đổi ra
+    <script>
+      const $ = (s) => document.querySelector(s);
+      const el = (t, cls, txt) => {
+        const n = document.createElement(t);
+        if (cls) n.className = cls;
+        if (txt != null) n.textContent = txt;
+        return n;
+      };
+      const show = (id) =>
+        [
+          "screen-form",
+          "screen-run",
+          "screen-history",
+          "screen-result",
+        ].forEach((s) => $("#" + s).classList.toggle("hidden", s !== id));
+      const mmss = (s) =>
+        Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+      /* Thời lượng luôn được lưu và truyền đi bằng giây; chỉ chỗ hiển thị mới đổi ra
    "x phút y giây" cho dễ đọc. */
-function fmtDur(sec){
-  sec = Math.round(Number(sec));
-  if (!isFinite(sec) || sec <= 0) return "";
-  if (sec < 60) return sec + " giây";
-  const m = Math.floor(sec/60), r = sec % 60;
-  return r ? `${m} phút ${r} giây` : `${m} phút`;
-}
+      function fmtDur(sec) {
+        sec = Math.round(Number(sec));
+        if (!isFinite(sec) || sec <= 0) return "";
+        if (sec < 60) return sec + " giây";
+        const m = Math.floor(sec / 60),
+          r = sec % 60;
+        return r ? `${m} phút ${r} giây` : `${m} phút`;
+      }
 
-let OPTIONS = null, RUN_ID = null, SINCE = 0, T0 = 0, TIMER = null, RESUMED = false;
-// Tăng mỗi lần điều hướng. Mọi tác vụ async có thể đổi màn hình phải chụp lại số
-// này trước khi await và bỏ qua kết quả nếu số đã đổi — nếu không, một fetch bay
-// dở từ màn trước sẽ kéo người dùng ra khỏi màn họ vừa mở.
-let NAV_GEN = 0;
-/* Trạng thái màn lịch sử. Khai báo sớm vì khối resume() ở dưới chạy ngay khi
+      let OPTIONS = null,
+        RUN_ID = null,
+        SINCE = 0,
+        T0 = 0,
+        TIMER = null,
+        RESUMED = false;
+
+      /* Hạn mức "một lượt truy cập = một lần chạy" (bật bằng biến SINGLE_RUN_PER_VISIT
+   ở server). Một lượt truy cập = một tab: sessionStorage sống qua reload nhưng
+   mất khi đóng tab, và cùng id đó được gửi lên server để chốt vé — giấu nút thôi
+   thì chỉ là trang trí. sessionStorage có thể ném lỗi (chặn cookie/chế độ riêng
+   tư) nên mọi truy cập đều bọc try. */
+      const VISIT_KEY = "cap.visit",
+        QUOTA_KEY = "cap.quota_used";
+      /* Bản sao trong bộ nhớ: nếu sessionStorage không dùng được, hạn mức vẫn còn hiệu
+   lực đến khi tải lại trang thay vì biến mất hoàn toàn. */
+      let VISIT_ID = null,
+        QUOTA_USED = false;
+      function ss(fn, fallback) {
+        try {
+          return fn(window.sessionStorage);
+        } catch (e) {
+          return fallback;
+        }
+      }
+      function visitId() {
+        if (!VISIT_ID) {
+          VISIT_ID =
+            ss((st) => st.getItem(VISIT_KEY), null) ||
+            (crypto.randomUUID
+              ? crypto.randomUUID()
+              : String(Date.now()) + Math.random());
+          ss((st) => st.setItem(VISIT_KEY, VISIT_ID));
+        }
+        return VISIT_ID;
+      }
+      const quotaUsed = () =>
+        QUOTA_USED || ss((st) => st.getItem(QUOTA_KEY) === "1", false);
+      function markQuotaUsed() {
+        QUOTA_USED = true;
+        ss((st) => st.setItem(QUOTA_KEY, "1"));
+        applyQuotaUI();
+      }
+      /* Log thô chỉ dành cho lúc debug: không bật SHOW_PROVIDER_ERRORS thì cả khối
+   biến mất, vì khi đó nó cũng chẳng còn gì ngoài tên các bước. Ẩn sẵn từ HTML để
+   không loé lên trước khi /api/options trả lời. */
+      let LOG_ERROR_SEEN = false;
+      function applyDebugUI() {
+        const on = !!(OPTIONS && OPTIONS.show_provider_errors);
+        const box = $("#log-details");
+        box.classList.toggle("hidden", !on);
+        // Lỗi có thể tới trước khi /api/options trả lời, nên nhớ lại rồi mở sau.
+        if (on && LOG_ERROR_SEEN) box.open = true;
+      }
+      /* Có lỗi là bung sẵn log thô, khỏi bắt bấm mở — chi tiết chỉ có ích khi thấy. */
+      function openLogOnError() {
+        LOG_ERROR_SEEN = true;
+        applyDebugUI();
+      }
+      /* Gọi lại mỗi lần quay về màn nhập brief: hết lượt thì nút chạy biến mất, chỉ
+   còn dòng báo tài nguyên bị hạn chế. */
+      function applyQuotaUI() {
+        const limited =
+          !!(OPTIONS && OPTIONS.single_run_per_visit) && quotaUsed();
+        $("#go").classList.toggle("hidden", limited);
+        const note = $("#quota-note");
+        note.textContent =
+          (OPTIONS && OPTIONS.quota_message) ||
+          "Tài nguyên bị hạn chế: mỗi lượt truy cập chỉ được chạy pipeline một lần.";
+        note.classList.toggle("hidden", !limited);
+      }
+      // Tăng mỗi lần điều hướng. Mọi tác vụ async có thể đổi màn hình phải chụp lại số
+      // này trước khi await và bỏ qua kết quả nếu số đã đổi — nếu không, một fetch bay
+      // dở từ màn trước sẽ kéo người dùng ra khỏi màn họ vừa mở.
+      let NAV_GEN = 0;
+      /* Trạng thái màn lịch sử. Khai báo sớm vì khối resume() ở dưới chạy ngay khi
    tải trang và có thể mở thẳng màn này từ #history. */
-const HIST = { page: 1, date: "", platform: "" };
-let FROM_HISTORY = false;
-/* Đánh số lượt tải lịch sử. Lần mở màn (refresh=1) quét lại toàn bộ Notion nên
+      const HIST = { page: 1, date: "", platform: "" };
+      let FROM_HISTORY = false;
+      /* Đánh số lượt tải lịch sử. Lần mở màn (refresh=1) quét lại toàn bộ Notion nên
    chậm hơn hẳn lần lọc ngay sau đó — không đánh số thì kết quả cũ về sau sẽ đè
    lên danh sách vừa lọc. */
-let HIST_SEQ = 0;
-// Nền tảng -> lớp màu chip, để nhìn phát biết ngay run thuộc kênh nào.
-const PLATFORM_CLASS = { youtube_shorts: "p1", youtube_long: "p2", tiktok: "p3", reels: "p4" };
-const STEPS = [];
+      let HIST_SEQ = 0;
+      // Nền tảng -> lớp màu chip, để nhìn phát biết ngay run thuộc kênh nào.
+      const PLATFORM_CLASS = {
+        youtube_shorts: "p1",
+        youtube_long: "p2",
+        tiktok: "p3",
+        reels: "p4",
+      };
+      const STEPS = [];
 
-/* ---------- màn 1 ---------- */
-function renderModels(platform) {
-  $("#model").innerHTML = "";
-  $("#light-model").innerHTML = "";
-  const models = OPTIONS.platform_models[platform] || OPTIONS.platform_models["claude"];
-  models.forEach(m => {
-    $("#model").add(new Option(m.label, m.value));
-    $("#light-model").add(new Option(m.label, m.value));
-  });
-  if(models.length > 0) $("#model").value = models[0].value;
-  $("#light-model").add(new Option("Giống model chính", ""), 0);
-  $("#light-model").value = "";
-}
+      /* ---------- màn 1 ---------- */
+      function renderModels(platform) {
+        $("#model").innerHTML = "";
+        $("#light-model").innerHTML = "";
+        const models =
+          OPTIONS.platform_models[platform] ||
+          OPTIONS.platform_models["claude"];
+        models.forEach((m) => {
+          $("#model").add(new Option(m.label, m.value));
+          $("#light-model").add(new Option(m.label, m.value));
+        });
+        if (models.length > 0) $("#model").value = models[0].value;
+        $("#light-model").add(new Option("Giống model chính", ""), 0);
+        $("#light-model").value = "";
+      }
 
-fetch("/api/options").then(r => r.json()).then(o => {
-  OPTIONS = o;
-  o.platforms.forEach(p => $("#platform").add(new Option(p.label, p.value)));
-  $("#hist-platform").add(new Option("Tất cả nền tảng", ""));
-  o.platforms.forEach(p => $("#hist-platform").add(new Option(p.label, p.value)));
+      fetch("/api/options")
+        .then((r) => r.json())
+        .then((o) => {
+          OPTIONS = o;
+          o.platforms.forEach((p) =>
+            $("#platform").add(new Option(p.label, p.value)),
+          );
+          $("#hist-platform").add(new Option("Tất cả nền tảng", ""));
+          o.platforms.forEach((p) =>
+            $("#hist-platform").add(new Option(p.label, p.value)),
+          );
 
-  const platMap = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini"};
-  o.avail_platforms.forEach(p => {
-    $("#llm-platform").add(new Option(platMap[p] || p, p));
-  });
+          const platMap = {
+            claude: "Claude",
+            chatgpt: "ChatGPT",
+            gemini: "Gemini",
+          };
+          o.avail_platforms.forEach((p) => {
+            $("#llm-platform").add(new Option(platMap[p] || p, p));
+          });
 
-  if (o.avail_platforms.length < 2) {
-    $("#llm-platform-row").classList.add("hidden");
-  } else {
-    $("#llm-platform-row").classList.remove("hidden");
-  }
+          if (o.avail_platforms.length < 2) {
+            $("#llm-platform-row").classList.add("hidden");
+          } else {
+            $("#llm-platform-row").classList.remove("hidden");
+          }
 
-  $("#llm-platform").onchange = (e) => {
-    renderModels(e.target.value);
-  };
+          $("#llm-platform").onchange = (e) => {
+            renderModels(e.target.value);
+          };
 
-  const initPlat = o.avail_platforms[0] || "claude";
-  $("#llm-platform").value = initPlat;
-  renderModels(initPlat);
+          const initPlat = o.avail_platforms[0] || "claude";
+          $("#llm-platform").value = initPlat;
+          renderModels(initPlat);
 
-  $("#light-hint").textContent = "— " + (o.light_stages || []).join(", ");
+          $("#light-hint").textContent =
+            "— " + (o.light_stages || []).join(", ");
 
-  (o.duration_units || []).forEach(u => $("#duration-unit").add(new Option(u.label, u.value)));
-  $("#duration-unit").value = DUR_UNIT;
-  $("#duration-unit").onchange = () => syncDurationUnit();
-  syncDurationUnit();
-});
+          (o.duration_units || []).forEach((u) =>
+            $("#duration-unit").add(new Option(u.label, u.value)),
+          );
+          $("#duration-unit").value = DUR_UNIT;
+          $("#duration-unit").onchange = () => syncDurationUnit();
+          syncDurationUnit();
 
-/* Đơn vị đang chọn ở ô thời lượng. Đổi đơn vị thì quy đổi luôn số đang nhập, và
+          applyQuotaUI();
+          applyDebugUI();
+        });
+
+      /* Đơn vị đang chọn ở ô thời lượng. Đổi đơn vị thì quy đổi luôn số đang nhập, và
    kéo theo min/max/step/placeholder — biên vẫn là 5 giây - 30 phút của server. */
-let DUR_UNIT = "sec";
-function unitSeconds(value){
-  const u = (OPTIONS?.duration_units || []).find(x => x.value === value);
-  return u ? u.seconds : 1;
-}
-function syncDurationUnit(){
-  const input = $("#duration"), next = $("#duration-unit").value || "sec";
-  const from = unitSeconds(DUR_UNIT), to = unitSeconds(next);
-  const [minSec, maxSec] = OPTIONS.duration_range_sec || [5, 1800];
+      let DUR_UNIT = "sec";
+      function unitSeconds(value) {
+        const u = (OPTIONS?.duration_units || []).find(
+          (x) => x.value === value,
+        );
+        return u ? u.seconds : 1;
+      }
+      function syncDurationUnit() {
+        const input = $("#duration"),
+          next = $("#duration-unit").value || "sec";
+        const from = unitSeconds(DUR_UNIT),
+          to = unitSeconds(next);
+        const [minSec, maxSec] = OPTIONS.duration_range_sec || [5, 1800];
 
-  const typed = parseFloat(input.value);
-  if (!isNaN(typed)) input.value = String(Math.round(typed * from / to * 100) / 100);
+        const typed = parseFloat(input.value);
+        if (!isNaN(typed))
+          input.value = String(Math.round(((typed * from) / to) * 100) / 100);
 
-  const inUnit = sec => Math.round(sec / to * 100) / 100;
-  input.min = inUnit(minSec);
-  input.max = Math.floor(maxSec / to);
-  input.step = to > 1 ? "any" : 1;
-  input.placeholder = String(inUnit(OPTIONS.default_duration));
-  $("#duration-hint").textContent = "— để trống = " + fmtDur(OPTIONS.default_duration);
-  DUR_UNIT = next;
-}
+        const inUnit = (sec) => Math.round((sec / to) * 100) / 100;
+        input.min = inUnit(minSec);
+        input.max = Math.floor(maxSec / to);
+        input.step = to > 1 ? "any" : 1;
+        input.placeholder = String(inUnit(OPTIONS.default_duration));
+        $("#duration-hint").textContent =
+          "— để trống = " + fmtDur(OPTIONS.default_duration);
+        DUR_UNIT = next;
+      }
 
-$("#go").onclick = async () => {
-  const topic = $("#topic").value.trim();
-  if (!topic) { showFormErr("Nhập chủ đề trước đã."); return; }
-  const body = {
-    topic,
-    platform: $("#platform").value,
-    duration: $("#duration").value.trim() || null,
-    duration_unit: DUR_UNIT,
-    llm_platform: $("#llm-platform").value,
-    model: $("#model").value,
-    light_model: $("#light-model").value,
-    tone: $("#tone").value, audience: $("#audience").value,
-    dry_run: $("#dry").checked,
-  };
-  $("#go").disabled = true;
-  const res = await fetch("/api/run", {method:"POST", headers:{"Content-Type":"application/json"},
-                                       body: JSON.stringify(body)});
-  const data = await res.json();
-  $("#go").disabled = false;
-  if (!res.ok) { showFormErr(data.error || "Không khởi động được."); return; }
+      $("#go").onclick = async () => {
+        const topic = $("#topic").value.trim();
+        if (!topic) {
+          showFormErr("Nhập chủ đề trước đã.");
+          return;
+        }
+        const body = {
+          topic,
+          platform: $("#platform").value,
+          duration: $("#duration").value.trim() || null,
+          duration_unit: DUR_UNIT,
+          llm_platform: $("#llm-platform").value,
+          model: $("#model").value,
+          light_model: $("#light-model").value,
+          tone: $("#tone").value,
+          audience: $("#audience").value,
+          dry_run: $("#dry").checked,
+          visit_id: visitId(),
+        };
+        $("#go").disabled = true;
+        const res = await fetch("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        $("#go").disabled = false;
+        if (!res.ok) {
+          // Server đã chốt vé thì client cũng phải khoá theo, dù vì lý do gì.
+          if (data.quota_exhausted) markQuotaUsed();
+          showFormErr(data.error || "Không khởi động được.");
+          return;
+        }
+        if (OPTIONS && OPTIONS.single_run_per_visit) markQuotaUsed();
 
-  RUN_ID = data.run_id;
-  location.hash = "run/" + RUN_ID;
-  startWatching();
-};
+        RUN_ID = data.run_id;
+        location.hash = "run/" + RUN_ID;
+        startWatching();
+      };
 
-function setRunHeader(brief){
-  if (!brief) return;
-  $("#run-topic").textContent = brief.topic;
-  $("#run-brief").textContent = `${brief.platform_label} · ${fmtDur(brief.duration)} · ${brief.llm_platform} · ${brief.model}`
-    + (brief.light_model ? ` (bước phụ: ${brief.light_model})` : "")
-    + (brief.dry_run ? " · chạy thử" : "");
-  if (!STEPS.length) buildStepper(brief);
-}
+      function setRunHeader(brief) {
+        if (!brief) return;
+        $("#run-topic").textContent = brief.topic;
+        $("#run-brief").textContent =
+          `${brief.platform_label} · ${fmtDur(brief.duration)} · ${brief.llm_platform} · ${brief.model}` +
+          (brief.light_model ? ` (bước phụ: ${brief.light_model})` : "") +
+          (brief.dry_run ? " · chạy thử" : "");
+        if (!STEPS.length) buildStepper(brief);
+      }
 
-function resetRunView(){
-  SINCE = 0; RESUMED = false;
-  STEPS.length = 0;
-  $("#steps").innerHTML = "";
-  $("#log").textContent = "";
-  $("#run-progress").textContent = "";
-  $("#elapsed").textContent = "0:00";
-  $("#run-err").classList.add("hidden");
-  $("#run-err").classList.remove("stopped");
-}
+      function resetRunView() {
+        SINCE = 0;
+        RESUMED = false;
+        STEPS.length = 0;
+        $("#steps").innerHTML = "";
+        $("#log").textContent = "";
+        LOG_ERROR_SEEN = false;
+        $("#log-details").open = false;
+        applyDebugUI();
+        $("#run-progress").textContent = "";
+        $("#elapsed").textContent = "0:00";
+        $("#run-err").classList.add("hidden");
+        $("#run-err").classList.remove("stopped");
+      }
 
-function goToForm(){
-  NAV_GEN++;
-  clearInterval(TIMER);
-  RUN_ID = null;
-  resetRunView();
-  $("#form-err").classList.add("hidden");
-  history.replaceState(null, "", location.pathname + location.search);
-  FROM_HISTORY = false;
-  show("screen-form");
-  refreshActive();
-}
+      function goToForm() {
+        NAV_GEN++;
+        clearInterval(TIMER);
+        RUN_ID = null;
+        resetRunView();
+        $("#form-err").classList.add("hidden");
+        history.replaceState(null, "", location.pathname + location.search);
+        FROM_HISTORY = false;
+        show("screen-form");
+        applyQuotaUI();
+        refreshActive();
+      }
 
-function startWatching(startedAt){
-  NAV_GEN++;
-  resetRunView();
-  show("screen-run");
-  T0 = startedAt ? startedAt * 1000 : Date.now();
-  clearInterval(TIMER);
-  TIMER = setInterval(() => {
-    $("#elapsed").textContent = mmss(Math.max(0, Math.floor((Date.now()-T0)/1000)));
-  }, 1000);
-  $("#stop-btn").classList.remove("hidden");
-  $("#stop-btn").disabled = false;
-  $("#stop-btn").textContent = "Dừng";
-  poll();
-}
+      function startWatching(startedAt) {
+        NAV_GEN++;
+        resetRunView();
+        show("screen-run");
+        T0 = startedAt ? startedAt * 1000 : Date.now();
+        clearInterval(TIMER);
+        TIMER = setInterval(() => {
+          $("#elapsed").textContent = mmss(
+            Math.max(0, Math.floor((Date.now() - T0) / 1000)),
+          );
+        }, 1000);
+        $("#stop-btn").classList.remove("hidden");
+        $("#stop-btn").disabled = false;
+        $("#stop-btn").textContent = "Dừng";
+        poll();
+      }
 
-$("#stop-btn").onclick = async () => {
-  if (!confirm("Dừng pipeline đang chạy? Phần đã tính đến giờ sẽ không được lưu.")) return;
-  const btn = $("#stop-btn");
-  btn.disabled = true;
-  btn.textContent = "Đang dừng…";
-  await fetch("/api/stop", {method:"POST", headers:{"Content-Type":"application/json"},
-                            body: JSON.stringify({id: RUN_ID})});
-};
-function showFormErr(msg){
-  const b = $("#form-err");
-  b.textContent = msg;
-  b.classList.remove("hidden");
-  if (b.scrollIntoView) b.scrollIntoView({behavior: "smooth", block: "center"});
-}
+      $("#stop-btn").onclick = async () => {
+        if (
+          !confirm(
+            "Dừng pipeline đang chạy? Phần đã tính đến giờ sẽ không được lưu.",
+          )
+        )
+          return;
+        const btn = $("#stop-btn");
+        btn.disabled = true;
+        btn.textContent = "Đang dừng…";
+        await fetch("/api/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: RUN_ID }),
+        });
+      };
+      function showFormErr(msg) {
+        const b = $("#form-err");
+        b.textContent = msg;
+        b.classList.remove("hidden");
+        if (b.scrollIntoView)
+          b.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
 
-/* Mở lại một lần chạy từ URL (#run/<id>) — F5 giữa chừng không mất tiến trình. */
-(function resume(){
-  const past = location.hash.match(/^#result\/([^/]+)(?:\/(\d+))?$/);
-  if (past){
-    const ref = decodeURIComponent(past[1]);
-    const url = "/api/result?page_id=" + encodeURIComponent(ref.replace(/^n:/, ""));
-    const gen = NAV_GEN;
-    fetch(url)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d && gen === NAV_GEN) showResult(d, parseInt(past[2] || "0", 10)); });
-    return;
-  }
-  if (location.hash === "#history"){ openHistory(); return; }
-  const m = location.hash.match(/^#run\/([0-9a-f-]+)$/);
-  if (!m) return;
-  RUN_ID = m[1];
-  startWatching();
-})();
+      /* Mở lại một lần chạy từ URL (#run/<id>) — F5 giữa chừng không mất tiến trình. */
+      (function resume() {
+        const past = location.hash.match(/^#result\/([^/]+)(?:\/(\d+))?$/);
+        if (past) {
+          const ref = decodeURIComponent(past[1]);
+          const url =
+            "/api/result?page_id=" + encodeURIComponent(ref.replace(/^n:/, ""));
+          const gen = NAV_GEN;
+          fetch(url)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+              if (d && gen === NAV_GEN)
+                showResult(d, parseInt(past[2] || "0", 10));
+            });
+          return;
+        }
+        if (location.hash === "#history") {
+          openHistory();
+          return;
+        }
+        const m = location.hash.match(/^#run\/([0-9a-f-]+)$/);
+        if (!m) return;
+        RUN_ID = m[1];
+        startWatching();
+      })();
 
-/* ---------- màn lịch sử ---------- */
-function openHistory(){
-  NAV_GEN++;
-  clearInterval(TIMER);
-  location.hash = "history";
-  show("screen-history");
-  loadHistory(true);
-}
+      /* ---------- màn lịch sử ---------- */
+      function openHistory() {
+        NAV_GEN++;
+        clearInterval(TIMER);
+        location.hash = "history";
+        show("screen-history");
+        loadHistory(true);
+      }
 
-function goBackFromResult(){
-  if (FROM_HISTORY) openHistory(); else goToForm();
-}
+      function goBackFromResult() {
+        if (FROM_HISTORY) openHistory();
+        else goToForm();
+      }
 
-function loadHistory(refresh){
-  const q = new URLSearchParams({page: HIST.page});
-  if (HIST.date) q.set("date", HIST.date);
-  if (HIST.platform) q.set("platform", HIST.platform);
-  if (refresh) q.set("refresh", "1");
-  const seq = ++HIST_SEQ, gen = NAV_GEN;
-  return fetch("/api/runs?" + q).then(r => r.json()).then(data => {
-    if (seq !== HIST_SEQ || gen !== NAV_GEN) return;
-    HIST.page = data.page;
-    renderHistory(data);
-  }).catch(() => {});
-}
+      function loadHistory(refresh) {
+        const q = new URLSearchParams({ page: HIST.page });
+        if (HIST.date) q.set("date", HIST.date);
+        if (HIST.platform) q.set("platform", HIST.platform);
+        if (refresh) q.set("refresh", "1");
+        const seq = ++HIST_SEQ,
+          gen = NAV_GEN;
+        return fetch("/api/runs?" + q)
+          .then((r) => r.json())
+          .then((data) => {
+            if (seq !== HIST_SEQ || gen !== NAV_GEN) return;
+            HIST.page = data.page;
+            renderHistory(data);
+          })
+          .catch(() => {});
+      }
 
-function renderHistory(data){
-  const box = $("#hist-list");
-  box.innerHTML = "";
-  (data.runs || []).forEach(r => {
-    const d = el("div","past-item");
-    const left = el("div");
-    left.append(el("div","t", r.title || r.topic || "(không tên)"));
+      function renderHistory(data) {
+        const box = $("#hist-list");
+        box.innerHTML = "";
+        (data.runs || []).forEach((r) => {
+          const d = el("div", "past-item");
+          const left = el("div");
+          left.append(el("div", "t", r.title || r.topic || "(không tên)"));
 
-    const meta = el("div","m");
-    meta.append(el("span", "pchip " + (PLATFORM_CLASS[r.platform] || ""),
-                   r.platform_label || r.platform || "—"));
-    const bits = [r.model, r.spoken_sec ? "đọc thử " + fmtDur(r.spoken_sec) : null]
-      .filter(Boolean);
-    bits.forEach(b => { meta.append(el("span",null,"·"), el("span",null,b)); });
-    if (r.run_at) meta.append(el("span",null,"·"), el("span","when", r.run_at));
-    left.append(meta);
+          const meta = el("div", "m");
+          meta.append(
+            el(
+              "span",
+              "pchip " + (PLATFORM_CLASS[r.platform] || ""),
+              r.platform_label || r.platform || "—",
+            ),
+          );
+          const bits = [
+            r.model,
+            r.spoken_sec ? "đọc thử " + fmtDur(r.spoken_sec) : null,
+          ].filter(Boolean);
+          bits.forEach((b) => {
+            meta.append(el("span", null, "·"), el("span", null, b));
+          });
+          if (r.run_at)
+            meta.append(el("span", null, "·"), el("span", "when", r.run_at));
+          left.append(meta);
 
-    d.append(left, el("div","m","Xem →"));
-    d.onclick = () => openRunResult(r);
-    box.append(d);
-  });
+          d.append(left, el("div", "m", "Xem →"));
+          d.onclick = () => openRunResult(r);
+          box.append(d);
+        });
 
-  const total = data.total || 0;
-  const filtered = !!(HIST.date || HIST.platform);
-  $("#hist-sub").textContent = total
-    ? `${total} lần chạy · trang ${HIST.page}/${data.pages} · ${data.page_size} bản ghi mỗi trang`
-    : (filtered ? "Không có lần chạy nào khớp bộ lọc." : "Chưa có lần chạy nào.");
-  $("#hist-empty").textContent = filtered
-    ? "Không có lần chạy nào khớp bộ lọc." : "Chưa có lần chạy nào.";
-  $("#hist-empty").classList.toggle("hidden", total > 0);
-  $("#hist-pager").classList.toggle("hidden", (data.pages || 1) < 2);
-  $("#hist-page").textContent = `Trang ${HIST.page}/${data.pages}`;
-  $("#hist-prev").disabled = HIST.page <= 1;
-  $("#hist-next").disabled = HIST.page >= (data.pages || 1);
-}
+        const total = data.total || 0;
+        const filtered = !!(HIST.date || HIST.platform);
+        $("#hist-sub").textContent = total
+          ? `${total} lần chạy · trang ${HIST.page}/${data.pages} · ${data.page_size} bản ghi mỗi trang`
+          : filtered
+            ? "Không có lần chạy nào khớp bộ lọc."
+            : "Chưa có lần chạy nào.";
+        $("#hist-empty").textContent = filtered
+          ? "Không có lần chạy nào khớp bộ lọc."
+          : "Chưa có lần chạy nào.";
+        $("#hist-empty").classList.toggle("hidden", total > 0);
+        $("#hist-pager").classList.toggle("hidden", (data.pages || 1) < 2);
+        $("#hist-page").textContent = `Trang ${HIST.page}/${data.pages}`;
+        $("#hist-prev").disabled = HIST.page <= 1;
+        $("#hist-next").disabled = HIST.page >= (data.pages || 1);
+      }
 
-async function openRunResult(r){
-  const gen = ++NAV_GEN;
-  try {
-    const res = await fetch("/api/result?page_id=" + encodeURIComponent(r.page_id));
-    if (!res.ok){
-      const body = await res.json().catch(() => ({}));
-      showHistErr(body.error || `Không mở được lần chạy này (HTTP ${res.status}).`);
-      return;
-    }
-    const data = await res.json();
-    if (gen === NAV_GEN){ FROM_HISTORY = true; showResult(data); }
-  } catch (exc) {
-    showHistErr("Không mở được lần chạy này: " + (exc && exc.message || exc));
-  }
-}
+      async function openRunResult(r) {
+        const gen = ++NAV_GEN;
+        try {
+          const res = await fetch(
+            "/api/result?page_id=" + encodeURIComponent(r.page_id),
+          );
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            showHistErr(
+              body.error || `Không mở được lần chạy này (HTTP ${res.status}).`,
+            );
+            return;
+          }
+          const data = await res.json();
+          if (gen === NAV_GEN) {
+            FROM_HISTORY = true;
+            showResult(data);
+          }
+        } catch (exc) {
+          showHistErr(
+            "Không mở được lần chạy này: " + ((exc && exc.message) || exc),
+          );
+        }
+      }
 
-function showHistErr(msg){
-  $("#hist-empty").textContent = msg;
-  $("#hist-empty").classList.remove("hidden");
-}
+      function showHistErr(msg) {
+        $("#hist-empty").textContent = msg;
+        $("#hist-empty").classList.remove("hidden");
+      }
 
-$("#to-history").onclick = openHistory;
-$("#hist-date").onchange = () => { HIST.date = $("#hist-date").value; HIST.page = 1; loadHistory(); };
-$("#hist-platform").onchange = () => { HIST.platform = $("#hist-platform").value; HIST.page = 1; loadHistory(); };
-$("#hist-clear").onclick = () => {
-  HIST.date = ""; HIST.platform = ""; HIST.page = 1;
-  $("#hist-date").value = ""; $("#hist-platform").value = "";
-  loadHistory();
-};
-$("#hist-prev").onclick = () => { if (HIST.page > 1){ HIST.page--; loadHistory(); } };
-$("#hist-next").onclick = () => { HIST.page++; loadHistory(); };
+      $("#to-history").onclick = openHistory;
+      $("#hist-date").onchange = () => {
+        HIST.date = $("#hist-date").value;
+        HIST.page = 1;
+        loadHistory();
+      };
+      $("#hist-platform").onchange = () => {
+        HIST.platform = $("#hist-platform").value;
+        HIST.page = 1;
+        loadHistory();
+      };
+      $("#hist-clear").onclick = () => {
+        HIST.date = "";
+        HIST.platform = "";
+        HIST.page = 1;
+        $("#hist-date").value = "";
+        $("#hist-platform").value = "";
+        loadHistory();
+      };
+      $("#hist-prev").onclick = () => {
+        if (HIST.page > 1) {
+          HIST.page--;
+          loadHistory();
+        }
+      };
+      $("#hist-next").onclick = () => {
+        HIST.page++;
+        loadHistory();
+      };
 
-/* Danh sách run đang chạy. Nguồn là KV chứ không phải Notion, nên một run tự
+      /* Danh sách run đang chạy. Nguồn là KV chứ không phải Notion, nên một run tự
    rời danh sách này ngay khi xong — đúng lúc nó xuất hiện ở "Lần chạy trước".
    Không cần xoá tay ở đâu cả. */
-let ACTIVE_COUNT = 0;
-function refreshActive(){
-  return fetch("/api/active").then(r => r.json()).then(({runs}) => {
-    runs = runs || [];
-    const box = $("#active-list");
-    box.innerHTML = "";
-    runs.forEach(r => {
-      const step = r.step ? `${r.step.name} (${r.step.index}/${r.step.total})`
-                          : "đang khởi động…";
-      const d = el("div","past-item");
-      const left = el("div");
-      left.append(el("div","t", r.topic || "(chưa có chủ đề)"));
-      left.append(el("div","m",
-        [r.platform, fmtDur(r.duration) || null,
-         r.dry_run ? "chạy thử" : null, step].filter(Boolean).join(" · ")));
-      d.append(left, el("div","running-badge", "Đang chạy · " + (r.started || "")));
-      d.onclick = () => openRun(r.id, r.started_at);
-      box.append(d);
-    });
-    $("#active").classList.toggle("hidden", runs.length === 0);
-    ACTIVE_COUNT = runs.length;
-  }).catch(() => {});
-}
+      let ACTIVE_COUNT = 0;
+      function refreshActive() {
+        return fetch("/api/active")
+          .then((r) => r.json())
+          .then(({ runs }) => {
+            runs = runs || [];
+            const box = $("#active-list");
+            box.innerHTML = "";
+            runs.forEach((r) => {
+              const step = r.step
+                ? `${r.step.name} (${r.step.index}/${r.step.total})`
+                : "đang khởi động…";
+              const d = el("div", "past-item");
+              const left = el("div");
+              left.append(el("div", "t", r.topic || "(chưa có chủ đề)"));
+              left.append(
+                el(
+                  "div",
+                  "m",
+                  [
+                    r.platform,
+                    fmtDur(r.duration) || null,
+                    r.dry_run ? "chạy thử" : null,
+                    step,
+                  ]
+                    .filter(Boolean)
+                    .join(" · "),
+                ),
+              );
+              /* Badge đếm đúng thời gian đã chạy, khớp với đồng hồ ở màn tiến trình.
+         Trước đây chỗ này in giờ bắt đầu dạng "HH:MM" nên nhìn cứ tưởng là
+         thời lượng. Giờ bắt đầu chuyển xuống tooltip. */
+              const badge = el("div", "running-badge");
+              badge.dataset.since = r.started_at || 0;
+              if (r.started)
+                badge.title = "Bắt đầu lúc " + r.started + " (giờ VN)";
+              d.append(left, badge);
+              d.onclick = () => openRun(r.id, r.started_at);
+              box.append(d);
+            });
+            $("#active").classList.toggle("hidden", runs.length === 0);
+            ACTIVE_COUNT = runs.length;
+            tickActiveBadges();
+          })
+          .catch(() => {});
+      }
 
-function openRun(id, startedAt){
-  RUN_ID = id;
-  location.hash = "run/" + id;
-  startWatching(startedAt);
-}
+      /* Danh sách chỉ tải lại mỗi 2 giây, nhưng đồng hồ phải nhảy từng giây nên tách
+   riêng: mốc bắt đầu nằm trong data-since của badge, chỉ việc trừ ra. */
+      function tickActiveBadges() {
+        document
+          .querySelectorAll("#active-list .running-badge")
+          .forEach((b) => {
+            const since = Number(b.dataset.since) || 0;
+            b.textContent =
+              "Đang chạy · " +
+              (since
+                ? mmss(Math.max(0, Math.floor(Date.now() / 1000 - since)))
+                : "…");
+          });
+      }
+      setInterval(tickActiveBadges, 1000);
 
-refreshActive();
-setInterval(() => {
-  if (!$("#screen-form").classList.contains("hidden")) refreshActive();
-}, 2000);
+      function openRun(id, startedAt) {
+        RUN_ID = id;
+        location.hash = "run/" + id;
+        startWatching(startedAt);
+      }
 
-/* ---------- màn 2 ---------- */
-/* `key` khớp với tên bước mà pipeline.ts phát ra trong event "step" ("Research",
+      refreshActive();
+      setInterval(() => {
+        if (!$("#screen-form").classList.contains("hidden")) refreshActive();
+      }, 2000);
+
+      /* ---------- màn 2 ---------- */
+      /* `key` khớp với tên bước mà pipeline.ts phát ra trong event "step" ("Research",
    "Script", "Metadata") — đổi bên đó phải sửa cả ở đây. */
-const STEP_PLAN = [
-  { key: "__init__", title: "Khởi tạo agent",
-    desc: b => `Nạp brief, dựng agent và kết nối ${b.model || "model"}` },
-  { key: "Research", title: "Nghiên cứu chủ đề",
-    desc: b => `Tìm thông tin có nguồn bằng ${b.model || "model"}, chấm độ tin cậy từng ý` },
-  { key: "Script", title: "Dựng kịch bản",
-    desc: b => `Chia phân đoạn và viết lời thoại khớp ngân sách ${fmtDur(b.duration) || "—"}` },
-  { key: "Metadata", title: "Sinh metadata đăng bài",
-    desc: b => `Rút tiêu đề, mô tả và hashtag cho ${b.platform_label || "nền tảng đã chọn"}` },
-];
+      const STEP_PLAN = [
+        {
+          key: "__init__",
+          title: "Khởi tạo agent",
+          desc: (b) => `Nạp brief, dựng agent và kết nối ${b.model || "model"}`,
+        },
+        {
+          key: "Research",
+          title: "Nghiên cứu chủ đề",
+          desc: (b) =>
+            `Tìm thông tin có nguồn bằng ${b.model || "model"}, chấm độ tin cậy từng ý`,
+        },
+        {
+          key: "Script",
+          title: "Dựng kịch bản",
+          desc: (b) =>
+            `Chia phân đoạn và viết lời thoại khớp ngân sách ${fmtDur(b.duration) || "—"}`,
+        },
+        {
+          key: "Metadata",
+          title: "Sinh metadata đăng bài",
+          desc: (b) =>
+            `Rút tiêu đề, mô tả và hashtag cho ${b.platform_label || "nền tảng đã chọn"}`,
+        },
+      ];
 
-const SUBSTAGE_TEXT = {
-  "research.search": "Tìm kiếm web và thu thập nguồn",
-  "research.structure": "Sắp xếp thành ghi chú có nguồn",
-  "script": "Viết lời thoại và gợi ý hình ảnh",
-  "metadata": "Sinh tiêu đề, mô tả và hashtag",
-};
+      const SUBSTAGE_TEXT = {
+        "research.search": "Tìm kiếm web và thu thập nguồn",
+        "research.structure": "Sắp xếp thành ghi chú có nguồn",
+        script: "Viết lời thoại và gợi ý hình ảnh",
+        metadata: "Sinh tiêu đề, mô tả và hashtag",
+      };
 
-const DOT_FOR = { done: "✓", failed: "✕", locked: "🔒" };
+      const DOT_FOR = { done: "✓", failed: "✕", locked: "🔒" };
 
-function buildStepper(brief){
-  const ul = $("#steps");
-  ul.innerHTML = "";
-  STEPS.length = 0;
-  STEP_PLAN.forEach((s, i) => {
-    const li = el("li", "locked");
-    li.dataset.key = s.key;
-    li.dataset.num = String(i + 1);
-    li.append(el("div", "dot", DOT_FOR.locked));
-    const box = el("div");
-    box.append(el("div", "stepname", s.title));
-    box.append(el("div", "stepdesc", s.desc(brief || {})));
-    box.append(el("div", "calls"));
-    li.append(box);
-    ul.append(li);
-    STEPS.push(li);
-  });
-  setStepState(STEPS[0], "done");
-  updateProgress();
-}
+      function buildStepper(brief) {
+        const ul = $("#steps");
+        ul.innerHTML = "";
+        STEPS.length = 0;
+        STEP_PLAN.forEach((s, i) => {
+          const li = el("li", "locked");
+          li.dataset.key = s.key;
+          li.dataset.num = String(i + 1);
+          li.append(el("div", "dot", DOT_FOR.locked));
+          const box = el("div");
+          box.append(el("div", "stepname", s.title));
+          box.append(el("div", "stepdesc", s.desc(brief || {})));
+          box.append(el("div", "calls"));
+          li.append(box);
+          ul.append(li);
+          STEPS.push(li);
+        });
+        setStepState(STEPS[0], "done");
+        updateProgress();
+      }
 
-function setStepState(li, state){
-  if (!li) return;
-  li.classList.remove("locked", "active", "done", "failed");
-  li.classList.add(state);
-  li.querySelector(".dot").textContent =
-    state === "active" ? li.dataset.num : DOT_FOR[state];
-}
+      function setStepState(li, state) {
+        if (!li) return;
+        li.classList.remove("locked", "active", "done", "failed");
+        li.classList.add(state);
+        li.querySelector(".dot").textContent =
+          state === "active" ? li.dataset.num : DOT_FOR[state];
+      }
 
-function stepByKey(key){
-  return STEPS.find(li => li.dataset.key === key);
-}
+      function stepByKey(key) {
+        return STEPS.find((li) => li.dataset.key === key);
+      }
 
-function activeStep(){
-  return STEPS.find(li => li.classList.contains("active"));
-}
+      function activeStep() {
+        return STEPS.find((li) => li.classList.contains("active"));
+      }
 
-function updateProgress(){
-  const done = STEPS.filter(li => li.classList.contains("done")).length;
-  $("#run-progress").textContent = STEPS.length ? `${done}/${STEPS.length} bước xong` : "";
-}
+      function updateProgress() {
+        const done = STEPS.filter((li) => li.classList.contains("done")).length;
+        $("#run-progress").textContent = STEPS.length
+          ? `${done}/${STEPS.length} bước xong`
+          : "";
+      }
 
-function enterStep(key){
-  const target = stepByKey(key);
-  if (!target) return;
-  for (const li of STEPS) {
-    if (li === target) break;
-    if (!li.classList.contains("failed")) setStepState(li, "done");
-  }
-  setStepState(target, "active");
-  updateProgress();
-}
+      function enterStep(key) {
+        const target = stepByKey(key);
+        if (!target) return;
+        for (const li of STEPS) {
+          if (li === target) break;
+          if (!li.classList.contains("failed")) setStepState(li, "done");
+        }
+        setStepState(target, "active");
+        updateProgress();
+      }
 
-function finishAllSteps(){
-  STEPS.forEach(li => { if (!li.classList.contains("failed")) setStepState(li, "done"); });
-  updateProgress();
-}
+      function finishAllSteps() {
+        STEPS.forEach((li) => {
+          if (!li.classList.contains("failed")) setStepState(li, "done");
+        });
+        updateProgress();
+      }
 
-function failActiveStep(){
-  setStepState(activeStep(), "failed");
-  updateProgress();
-}
+      function failActiveStep() {
+        setStepState(activeStep(), "failed");
+        updateProgress();
+      }
 
-function addSubLine(text){
-  const box = (activeStep() || STEPS[STEPS.length - 1])?.querySelector(".calls");
-  if (!box) return;
-  box.append(el("div", null, text));
-}
+      function addSubLine(text) {
+        const box = (activeStep() || STEPS[STEPS.length - 1])?.querySelector(
+          ".calls",
+        );
+        if (!box) return;
+        box.append(el("div", null, text));
+      }
 
-function render(events){
-  for (const ev of events){
-    if (ev.type === "step"){
-      enterStep(ev.name);
-    } else if (ev.type === "usage"){
-      const model = ev.model ? ` · ${ev.model}` : "";
-      addSubLine("✓ " + (SUBSTAGE_TEXT[ev.stage] || ev.stage) + model);
-    } else if (ev.type === "retry"){
-      addSubLine("↻ " + ev.message);
-    } else if (ev.type === "error"){
-      const b = $("#run-err"); b.textContent = ev.message; b.classList.remove("hidden");
-      failActiveStep();
-    }
-    if (ev.message || ev.type === "step")
-      $("#log").textContent += (ev.message || ev.name) + "\n";
-  }
-}
+      function render(events) {
+        for (const ev of events) {
+          if (ev.type === "step") {
+            enterStep(ev.name);
+          } else if (ev.type === "usage") {
+            const model = ev.model ? ` · ${ev.model}` : "";
+            addSubLine("✓ " + (SUBSTAGE_TEXT[ev.stage] || ev.stage) + model);
+          } else if (ev.type === "retry") {
+            addSubLine("↻ " + ev.message);
+          } else if (ev.type === "error") {
+            const b = $("#run-err");
+            b.textContent = ev.message;
+            b.classList.remove("hidden");
+            failActiveStep();
+          }
+          if (ev.message || ev.type === "step")
+            $("#log").textContent += (ev.message || ev.name) + "\n";
+          if (
+            ev.type === "error" ||
+            (ev.type === "log" &&
+              String(ev.message || "").startsWith("[chi tiết lỗi]"))
+          )
+            openLogOnError();
+        }
+      }
 
-async function poll(){
-  const gen = NAV_GEN;
-  const r = await fetch(`/api/status?id=${RUN_ID}&since=${SINCE}`);
-  const s = await r.json();
-  if (gen !== NAV_GEN) return;
-  SINCE = s.total_events;
-  setRunHeader(s.brief);
-  if (s.started_at && !RESUMED){ RESUMED = true; T0 = s.started_at * 1000; }
-  render(s.events);
+      async function poll() {
+        const gen = NAV_GEN;
+        const r = await fetch(`/api/status?id=${RUN_ID}&since=${SINCE}`);
+        const s = await r.json();
+        if (gen !== NAV_GEN) return;
+        SINCE = s.total_events;
+        setRunHeader(s.brief);
+        if (s.started_at && !RESUMED) {
+          RESUMED = true;
+          T0 = s.started_at * 1000;
+        }
+        render(s.events);
 
-  if (s.status === "running"){ setTimeout(poll, 700); return; }
-  clearInterval(TIMER);
-  $("#stop-btn").classList.add("hidden");
+        if (s.status === "running") {
+          setTimeout(poll, 700);
+          return;
+        }
+        clearInterval(TIMER);
+        $("#stop-btn").classList.add("hidden");
 
-  if (s.status === "error" || s.status === "stopped"){
-    const b = $("#run-err");
-    b.textContent = s.error || "Pipeline dừng giữa chừng.";
-    b.classList.toggle("stopped", s.status === "stopped");
-    b.classList.remove("hidden");
-    failActiveStep();
-    return;
-  }
-  finishAllSteps();
+        if (s.status === "error" || s.status === "stopped") {
+          if (s.status === "error") openLogOnError();
+          const b = $("#run-err");
+          b.textContent = s.error || "Pipeline dừng giữa chừng.";
+          b.classList.toggle("stopped", s.status === "stopped");
+          b.classList.remove("hidden");
+          failActiveStep();
+          return;
+        }
+        finishAllSteps();
 
-  if (!s.result){
-    const b = $("#run-err");
-    b.textContent = s.error
-      || "Chạy thử xong. Dữ liệu giả không được lưu ở đâu nên không có kết quả để xem.";
-    b.classList.add("stopped");
-    b.classList.remove("hidden");
-    return;
-  }
-  showResult(s.result);
-}
+        if (!s.result) {
+          const b = $("#run-err");
+          b.textContent =
+            s.error ||
+            "Chạy thử xong. Dữ liệu giả không được lưu ở đâu nên không có kết quả để xem.";
+          b.classList.add("stopped");
+          b.classList.remove("hidden");
+          return;
+        }
+        showResult(s.result);
+      }
 
-/* ---------- màn 3 ---------- */
-function showResult(res, tab = 0){
-  const meta = res.meta || {}, dur = meta.duration || {};
-  const script = res.script || {}, brief = res.brief || {};
+      /* ---------- màn 3 ---------- */
+      function showResult(res, tab = 0) {
+        const meta = res.meta || {},
+          dur = meta.duration || {};
+        const script = res.script || {},
+          brief = res.brief || {};
 
-  $("#res-title").textContent = script.working_title || "Kết quả";
-  $("#res-sub").textContent = `${brief.topic || ""} · ${brief.platform || ""}`;
+        $("#res-title").textContent = script.working_title || "Kết quả";
+        $("#res-sub").textContent =
+          `${brief.topic || ""} · ${brief.platform || ""}`;
 
-  const notionBtn = $("#res-notion");
-  if (meta.notion_url){
-    notionBtn.classList.remove("hidden");
-    notionBtn.onclick = () => window.open(meta.notion_url, "_blank");
-  } else {
-    notionBtn.classList.add("hidden");
-  }
+        const notionBtn = $("#res-notion");
+        if (meta.notion_url) {
+          notionBtn.classList.remove("hidden");
+          notionBtn.onclick = () => window.open(meta.notion_url, "_blank");
+        } else {
+          notionBtn.classList.add("hidden");
+        }
 
-  const warnBox = $("#res-warn"); warnBox.innerHTML = "";
-  (meta.warnings || []).forEach(w => warnBox.append(el("div","warnbox","⚠ " + w)));
+        const warnBox = $("#res-warn");
+        warnBox.innerHTML = "";
+        (meta.warnings || []).forEach((w) =>
+          warnBox.append(el("div", "warnbox", "⚠ " + w)),
+        );
 
-  const drift = dur.drift_pct == null ? "" :
-    ` (${dur.drift_pct > 0 ? "+" : ""}${dur.drift_pct.toFixed(1)}%)`;
-  const stats = [
-    [fmtDur(dur.spoken_estimate_sec) || "—",
-     `Đọc thử${drift} · mục tiêu ${fmtDur(dur.target_sec) || "—"}`],
-    [String((script.sections || []).length), "Phân đoạn kịch bản"],
-    [String((res.research?.facts || []).length), "Thông tin có nguồn"],
-  ];
-  const sbox = $("#res-stats"); sbox.innerHTML = "";
-  stats.forEach(([v,l]) => { const d = el("div","stat");
-    d.append(el("b",null,v), el("span",null,l)); sbox.append(d); });
+        const drift =
+          dur.drift_pct == null
+            ? ""
+            : ` (${dur.drift_pct > 0 ? "+" : ""}${dur.drift_pct.toFixed(1)}%)`;
+        const stats = [
+          [
+            fmtDur(dur.spoken_estimate_sec) || "—",
+            `Đọc thử${drift} · mục tiêu ${fmtDur(dur.target_sec) || "—"}`,
+          ],
+          [String((script.sections || []).length), "Phân đoạn kịch bản"],
+          [String((res.research?.facts || []).length), "Thông tin có nguồn"],
+        ];
+        const sbox = $("#res-stats");
+        sbox.innerHTML = "";
+        stats.forEach(([v, l]) => {
+          const d = el("div", "stat");
+          d.append(el("b", null, v), el("span", null, l));
+          sbox.append(d);
+        });
 
-  const tabs = [
-    ["Kịch bản", () => tabScript(res)],
-    ["Metadata", () => tabMeta(res)],
-    ["Nghiên cứu", () => tabResearch(res)],
-    ["Tệp", () => tabFiles(res)],
-  ];
-  const tb = $("#tabs"); tb.innerHTML = "";
-  const pick = i => {
-    [...tb.children].forEach((c, j) => c.setAttribute("aria-selected", i === j));
-    $("#tabbody").replaceChildren(tabs[i][1]());
-    const ref = res.notion_page_id ? "n:" + res.notion_page_id : null;
-    if (ref) location.hash = `result/${encodeURIComponent(ref)}/${i}`;
-  };
-  tabs.forEach(([name], i) => {
-    const b = el("button", null, name);
-    b.onclick = () => pick(i);
-    tb.append(b);
-  });
-  pick(tab);
-  show("screen-result");
-}
+        const tabs = [
+          ["Kịch bản", () => tabScript(res)],
+          ["Metadata", () => tabMeta(res)],
+          ["Nghiên cứu", () => tabResearch(res)],
+          ["Tệp", () => tabFiles(res)],
+        ];
+        const tb = $("#tabs");
+        tb.innerHTML = "";
+        const pick = (i) => {
+          [...tb.children].forEach((c, j) =>
+            c.setAttribute("aria-selected", i === j),
+          );
+          $("#tabbody").replaceChildren(tabs[i][1]());
+          const ref = res.notion_page_id ? "n:" + res.notion_page_id : null;
+          if (ref) location.hash = `result/${encodeURIComponent(ref)}/${i}`;
+        };
+        tabs.forEach(([name], i) => {
+          const b = el("button", null, name);
+          b.onclick = () => pick(i);
+          tb.append(b);
+        });
+        pick(tab);
+        show("screen-result");
+      }
 
-function tabScript(res){
-  const box = el("div");
-  let t = 0;
-  (res.script?.sections || []).forEach(s => {
-    const d = el("div","sec");
-    const end = t + s.duration_sec;
-    d.append(el("div","time", `${mmss(t)} – ${mmss(end)} · ${s.duration_sec}s`));
-    t = end;
-    d.append(el("h3",null,s.name));
-    d.append(el("p","goal",s.goal));
-    d.append(el("p",null,s.narration));
-    d.append(el("p","visual","🎬 " + s.visual_cue));
-    box.append(d);
-  });
-  return box;
-}
+      function tabScript(res) {
+        const box = el("div");
+        let t = 0;
+        (res.script?.sections || []).forEach((s) => {
+          const d = el("div", "sec");
+          const end = t + s.duration_sec;
+          d.append(
+            el("div", "time", `${mmss(t)} – ${mmss(end)} · ${s.duration_sec}s`),
+          );
+          t = end;
+          d.append(el("h3", null, s.name));
+          d.append(el("p", "goal", s.goal));
+          d.append(el("p", null, s.narration));
+          d.append(el("p", "visual", "🎬 " + s.visual_cue));
+          box.append(d);
+        });
+        return box;
+      }
 
-function tabMeta(res){
-  const box = el("div");
-  box.append(el("h2",null,"Title gợi ý"));
-  const ul = el("ul","plain");
-  (res.title_options || []).forEach(t => ul.append(el("li",null,t)));
-  box.append(ul);
-  box.append(el("h2",null,"Description"));
-  const p = el("p"); p.style.whiteSpace = "pre-wrap";
-  p.textContent = res.description || ""; box.append(p);
-  const t = res.tags || {};
-  if (t.hashtags?.length){
-    box.append(el("h2",null,"Hashtag"));
-    const c = el("div","chips");
-    t.hashtags.forEach(h => c.append(el("span","chip",h))); box.append(c);
-  }
-  if (t.tags?.length){
-    box.append(el("h2",null,"Tag"));
-    const c = el("div","chips");
-    t.tags.forEach(h => c.append(el("span","chip",h))); box.append(c);
-  }
-  return box;
-}
+      function tabMeta(res) {
+        const box = el("div");
+        box.append(el("h2", null, "Title gợi ý"));
+        const ul = el("ul", "plain");
+        (res.title_options || []).forEach((t) => ul.append(el("li", null, t)));
+        box.append(ul);
+        box.append(el("h2", null, "Description"));
+        const p = el("p");
+        p.style.whiteSpace = "pre-wrap";
+        p.textContent = res.description || "";
+        box.append(p);
+        const t = res.tags || {};
+        if (t.hashtags?.length) {
+          box.append(el("h2", null, "Hashtag"));
+          const c = el("div", "chips");
+          t.hashtags.forEach((h) => c.append(el("span", "chip", h)));
+          box.append(c);
+        }
+        if (t.tags?.length) {
+          box.append(el("h2", null, "Tag"));
+          const c = el("div", "chips");
+          t.tags.forEach((h) => c.append(el("span", "chip", h)));
+          box.append(c);
+        }
+        return box;
+      }
 
-function tabResearch(res){
-  const r = res.research || {}, box = el("div");
-  if (r.topic_summary){ box.append(el("h2",null,"Bối cảnh")); box.append(el("p",null,r.topic_summary)); }
-  box.append(el("h2",null,"Thông tin & nguồn"));
-  (r.facts || []).forEach(f => {
-    const d = el("div","fact");
-    const head = el("p");
-    head.append(el("span","badge b-"+f.confidence, f.confidence));
-    head.append(document.createTextNode(f.claim));
-    d.append(head);
-    if (f.source_url?.startsWith("http")){
-      const a = el("a",null,f.source_url); a.href = f.source_url;
-      a.target = "_blank"; a.rel = "noreferrer"; d.append(a);
-    } else {
-      d.append(el("span","hint","Không có URL nguồn"));
-    }
-    box.append(d);
-  });
-  const more = [["Góc kể chuyện", r.angle_suggestions], ["Ý tưởng hook", r.hook_ideas],
-                ["Còn bỏ ngỏ", r.open_questions]];
-  more.forEach(([name, items]) => {
-    if (!items?.length) return;
-    box.append(el("h2",null,name));
-    const ul = el("ul","plain");
-    items.forEach(i => ul.append(el("li",null,i))); box.append(ul);
-  });
-  return box;
-}
+      function tabResearch(res) {
+        const r = res.research || {},
+          box = el("div");
+        if (r.topic_summary) {
+          box.append(el("h2", null, "Bối cảnh"));
+          box.append(el("p", null, r.topic_summary));
+        }
+        box.append(el("h2", null, "Thông tin & nguồn"));
+        (r.facts || []).forEach((f) => {
+          const d = el("div", "fact");
+          const head = el("p");
+          head.append(el("span", "badge b-" + f.confidence, f.confidence));
+          head.append(document.createTextNode(f.claim));
+          d.append(head);
+          if (f.source_url?.startsWith("http")) {
+            const a = el("a", null, f.source_url);
+            a.href = f.source_url;
+            a.target = "_blank";
+            a.rel = "noreferrer";
+            d.append(a);
+          } else {
+            d.append(el("span", "hint", "Không có URL nguồn"));
+          }
+          box.append(d);
+        });
+        const more = [
+          ["Góc kể chuyện", r.angle_suggestions],
+          ["Ý tưởng hook", r.hook_ideas],
+          ["Còn bỏ ngỏ", r.open_questions],
+        ];
+        more.forEach(([name, items]) => {
+          if (!items?.length) return;
+          box.append(el("h2", null, name));
+          const ul = el("ul", "plain");
+          items.forEach((i) => ul.append(el("li", null, i)));
+          box.append(ul);
+        });
+        return box;
+      }
 
-function tabFiles(res){
-  const box = el("div");
-  box.append(el("h2",null,"script.md"));
-  const pre = el("pre","log"); pre.style.maxHeight = "460px";
-  pre.textContent = res.script_md || ""; box.append(pre);
-  return box;
-}
-</script>
-</body>
+      function tabFiles(res) {
+        const box = el("div");
+        box.append(el("h2", null, "script.md"));
+        const pre = el("pre", "log");
+        pre.style.maxHeight = "460px";
+        pre.textContent = res.script_md || "";
+        box.append(pre);
+        return box;
+      }
+    </script>
+  </body>
 </html>

@@ -8,6 +8,8 @@ export interface Env extends PipelineEnv {
   RUNS_KV: KVNamespace;
   ASSETS: Fetcher;
   CONTENT_AGENT_MODEL?: string;
+  // "true" => mỗi lượt truy cập chỉ được chạy pipeline một lần (xem webConfig).
+  SINGLE_RUN_PER_VISIT?: string;
 }
 
 export default {

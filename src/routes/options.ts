@@ -1,14 +1,24 @@
 // GET /api/options — which LLM platforms/models are usable with the keys present.
 
-import { LIGHT_STAGES, PLATFORM_MODELS, PLATFORMS, defaultModel } from "../config";
+import { LIGHT_STAGES, PLATFORM_MODELS, PLATFORMS, defaultModel, showProviderErrors } from "../config";
 import { jsonResponse } from "../http";
-import { DEFAULT_DURATION_SEC, DURATION_UNITS, MAX_DURATION_SEC, MIN_DURATION_SEC, PLATFORM_LABELS } from "../webConfig";
+import {
+  DEFAULT_DURATION_SEC,
+  DURATION_UNITS,
+  MAX_DURATION_SEC,
+  MIN_DURATION_SEC,
+  PLATFORM_LABELS,
+  VISIT_QUOTA_MESSAGE,
+  singleRunPerVisit,
+} from "../webConfig";
 
 export interface OptionsEnv {
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
   GEMINI_API_KEY?: string;
   CONTENT_AGENT_MODEL?: string;
+  SINGLE_RUN_PER_VISIT?: string;
+  SHOW_PROVIDER_ERRORS?: string;
 }
 
 export function handleOptions(env: OptionsEnv): Response {
@@ -27,5 +37,8 @@ export function handleOptions(env: OptionsEnv): Response {
     default_duration: DEFAULT_DURATION_SEC,
     duration_units: DURATION_UNITS,
     duration_range_sec: [MIN_DURATION_SEC, MAX_DURATION_SEC],
+    single_run_per_visit: singleRunPerVisit(env),
+    show_provider_errors: showProviderErrors(env),
+    quota_message: VISIT_QUOTA_MESSAGE,
   });
 }

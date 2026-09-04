@@ -16,6 +16,10 @@ preview_id = "25fd87d932584ce39425d170fdabf222"
 #   ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
 #   NOTION_TOKEN, NOTION_DATA_SOURCE_ID
 #
-# Optional plain var override:
+# Optional plain var overrides:
 # [vars]
 # CONTENT_AGENT_MODEL = "claude-opus-5"
+# # "true" => mỗi lượt truy cập chỉ được chạy pipeline một lần.
+# SINGLE_RUN_PER_VISIT = "true"
+# # "true" => đổ nguyên văn lỗi nhà cung cấp vào log thô của lần chạy.
+# SHOW_PROVIDER_ERRORS = "true"

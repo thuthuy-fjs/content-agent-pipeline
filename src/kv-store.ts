@@ -4,8 +4,12 @@
 // eventually consistent — fine for a single-user tool, not for shared state.
 
 import type { PipelineEvent } from "./events";
+import { vnClock } from "./webConfig";
 
 export type RunStatus = "running" | "done" | "error" | "stopped";
+
+/** Dùng ở cả /api/stop lẫn nhánh StoppedError của pipeline — phải giống nhau. */
+export const STOP_MESSAGE = "Đã dừng theo yêu cầu.";
 
 export interface RunBrief {
   topic: string;
@@ -122,6 +126,8 @@ export interface ActiveRunSummary {
   platform: string;
   duration: number;
   dry_run: boolean;
+  /** Giờ bắt đầu theo giờ VN, "HH:MM" — chỉ để hiện tooltip; UI đếm thời gian
+      chạy từ `started_at`. */
   started: string;
   started_at: number;
   step: { name: string; index: number; total: number } | null;
@@ -142,7 +148,7 @@ export async function listActiveRuns(kv: KVNamespace): Promise<ActiveRunSummary[
         platform: meta.platform,
         duration: meta.duration,
         dry_run: meta.dry_run,
-        started: new Date(meta.started_at * 1000).toISOString().slice(11, 16),
+        started: vnClock(meta.started_at),
         started_at: meta.started_at,
         step: meta.step,
       });
@@ -151,4 +157,28 @@ export async function listActiveRuns(kv: KVNamespace): Promise<ActiveRunSummary[
   } while (cursor);
   out.sort((a, b) => b.started_at - a.started_at);
   return out;
+}
+
+/* Cờ dừng nằm ở key riêng, không nằm trong bản ghi run. Lý do: updateRun() là
+   đọc-sửa-ghi không nguyên tử, nên một emit() của pipeline (đã đọc bản ghi từ
+   trước) có thể ghi đè mất cờ vừa đặt — đúng lúc cần nhất thì hỏng. Key riêng
+   thì hai bên không giẫm chân nhau. TTL 24h để không rác lại mãi. */
+const STOP_TTL_SEC = 86400;
+
+export async function requestStop(kv: KVNamespace, id: string): Promise<void> {
+  await kv.put(`stop:${id}`, String(Math.round(Date.now() / 1000)), { expirationTtl: STOP_TTL_SEC });
+}
+
+export async function isStopRequested(kv: KVNamespace, id: string): Promise<boolean> {
+  return (await kv.get(`stop:${id}`)) !== null;
+}
+
+/* Lượt chạy của một lần truy cập. Key nằm ngoài prefix "run:" nên không lọt vào
+   listActiveRuns(). KV không có compare-and-set, nhưng ở đây chỉ cần chặn lần
+   bấm thứ hai của cùng một tab nên đọc-rồi-ghi là đủ. */
+export async function claimVisit(kv: KVNamespace, visitId: string, ttlSec: number): Promise<boolean> {
+  const visitKey = `visit:${visitId}`;
+  if (await kv.get(visitKey)) return false;
+  await kv.put(visitKey, String(Math.round(Date.now() / 1000)), { expirationTtl: ttlSec });
+  return true;
 }

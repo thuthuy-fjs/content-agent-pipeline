@@ -8,6 +8,7 @@ import {
   HISTORY_MAX_RECORDS,
   HISTORY_PAGE_SIZE,
   PLATFORM_LABELS,
+  VN_UTC_OFFSET_MS,
 } from "../webConfig";
 
 const HISTORY_CACHE_KEY = "history-cache";
@@ -22,7 +23,7 @@ interface DecoratedRun extends RunListItem {
 // khong co "gio dia phuong" on dinh nen cong offset thang vao epoch.
 function decorate(run: RunListItem): DecoratedRun {
   const pad = (n: number) => String(n).padStart(2, "0");
-  const d = new Date((run._sort_ts || 0) * 1000 + 7 * 3600 * 1000);
+  const d = new Date((run._sort_ts || 0) * 1000 + VN_UTC_OFFSET_MS);
   const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
   const run_at = `${date} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
   const platform = (run.platform as string) || "";

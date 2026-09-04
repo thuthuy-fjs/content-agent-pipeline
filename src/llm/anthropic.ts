@@ -34,7 +34,12 @@ export async function callAnthropic(params: CreateParams, secrets: ProviderSecre
 
   let res: Response;
   try {
-    res = await fetch(ANTHROPIC_API, { method: "POST", headers, body: JSON.stringify(body) });
+    res = await fetch(ANTHROPIC_API, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: params.signal,
+    });
   } catch (exc) {
     throw providerError(`Anthropic: không kết nối được tới API: ${(exc as Error).message}`);
   }

@@ -8,10 +8,10 @@ import { runMetadata } from "./agents/metadata";
 import { runResearch } from "./agents/research";
 import { runScript } from "./agents/script";
 import type { VideoBrief } from "./brief";
-import { MAX_LOW_CONFIDENCE_RATIO, PROVIDER_UNAVAILABLE } from "./config";
+import { MAX_LOW_CONFIDENCE_RATIO, PROVIDER_UNAVAILABLE, showProviderErrors } from "./config";
 import type { PipelineEvent } from "./events";
-import { getRun, updateRun, type RunRecord } from "./kv-store";
-import { ProviderError } from "./llm/errors";
+import { STOP_MESSAGE, isStopRequested, updateRun, type RunRecord } from "./kv-store";
+import { ProviderError, clampDetail, stripSecretValues } from "./llm/errors";
 import { LLMRunner, StoppedError, type LlmPlatform } from "./llm/runner";
 import { NotionPublishError, publishRun, readRun, type NotionEnv, type RunSummary } from "./notion";
 import { lowConfidenceRatio, type ResearchNotes } from "./schemas";
@@ -30,6 +30,7 @@ export interface PipelineEnv extends NotionEnv {
   OPENAI_API_KEY?: string;
   GEMINI_API_KEY?: string;
   ANTHROPIC_WORKSPACE_ID?: string;
+  SHOW_PROVIDER_ERRORS?: string;
 }
 
 function factCheckWarnings(research: ResearchNotes): string[] {
@@ -56,9 +57,28 @@ export async function runPipeline(
   const emit = async (event: PipelineEvent) => {
     await updateRun(kv, runId, (r: RunRecord) => r.events.push(event));
   };
-  const shouldStop = async () => {
-    const record = await getRun(kv, runId);
-    return Boolean(record?.stopRequested);
+  /* Nguyên văn lỗi, chỉ khi bật SHOW_PROVIDER_ERRORS. Đi vào event log nên hiện
+     thẳng trong ô "Log thô" của màn tiến trình. */
+  const emitDetail = async (detail: string) => {
+    if (!showProviderErrors(env)) return;
+    const safe = clampDetail(stripSecretValues(detail, env as unknown as Record<string, unknown>));
+    await emit({ type: "log", message: `[chi tiết lỗi] ${safe}` });
+  };
+  const shouldStop = () => isStopRequested(kv, runId);
+
+  /* Ghi trạng thái cuối. Đọc lại cờ dừng ngay trước khi ghi: người dùng có thể
+     đã bấm Dừng trong lúc bước cuối chạy, và bản ghi thì có thể vừa bị một
+     emit() ghi đè mất cờ — cờ ở key riêng mới là nguồn đúng. */
+  const finalize = async (mutate: (r: RunRecord) => void) => {
+    const stopped = await shouldStop();
+    await updateRun(kv, runId, (r) => {
+      mutate(r);
+      if (stopped || r.stopRequested) {
+        r.stopRequested = true;
+        r.status = "stopped";
+        r.error = STOP_MESSAGE;
+      }
+    });
   };
 
   const runner = new LLMRunner({
@@ -106,7 +126,7 @@ export async function runPipeline(
     for (const w of warnings) await emit({ type: "warning", message: w });
 
     if (opts.dryRun) {
-      await updateRun(kv, runId, (r) => {
+      await finalize((r) => {
         r.status = "done";
       });
       return;
@@ -132,7 +152,8 @@ export async function runPipeline(
         await emit({ type: "log", message: rawDump });
         await emit({ type: "log", message: "=== HẾT JSON GỐC ===" });
         console.error(`[provider] Notion: không lưu được: ${exc.message}`);
-        await updateRun(kv, runId, (r) => {
+        await emitDetail(`Notion: không lưu được: ${exc.message}`);
+        await finalize((r) => {
           r.status = "error";
           r.error = PROVIDER_UNAVAILABLE;
         });
@@ -150,7 +171,9 @@ export async function runPipeline(
     }
 
     await emit({ type: "notion", url: page.url });
-    await updateRun(kv, runId, (r) => {
+    // Đã lên Notion rồi thì giữ lại link kể cả khi người dùng vừa bấm dừng —
+    // chỉ có trạng thái là không được lật ngược về "done".
+    await finalize((r) => {
       r.status = "done";
       r.notion_url = page.url;
       r.result = result;
@@ -158,8 +181,9 @@ export async function runPipeline(
   } catch (exc) {
     if (exc instanceof StoppedError) {
       await updateRun(kv, runId, (r) => {
+        r.stopRequested = true;
         r.status = "stopped";
-        r.error = "Đã dừng theo yêu cầu.";
+        r.error = STOP_MESSAGE;
       });
       return;
     }
@@ -170,7 +194,10 @@ export async function runPipeline(
       console.error("[provider] unexpected pipeline error:", exc);
     }
     const message = exc instanceof ProviderError ? exc.message : PROVIDER_UNAVAILABLE;
-    await updateRun(kv, runId, (r) => {
+    await emitDetail(
+      exc instanceof ProviderError ? exc.detail : String((exc as Error)?.stack || exc)
+    );
+    await finalize((r) => {
       r.status = "error";
       r.error = message;
     });

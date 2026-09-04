@@ -14,6 +14,14 @@ import type { CreateParams, LlmMessage, LlmResponse, OutputConfig, ProviderSecre
 
 const MAX_PAUSE_RESTARTS = 5;
 
+/* Một lượt gọi model có thể kéo dài hàng phút (research kèm web search), nhưng
+   không phải là vô hạn: không có mốc này thì một request treo giữ nguyên bản ghi
+   ở "running" cho tới khi Worker chết, và không ai biết. */
+const PROVIDER_TIMEOUT_MS = 5 * 60 * 1000;
+/* Nhịp hỏi lại KV xem người dùng đã bấm Dừng chưa, trong lúc request đang bay.
+   Chỉ là read nên rẻ; trình duyệt vốn đã poll /api/status mỗi 700ms. */
+const STOP_POLL_MS = 5000;
+
 export type LlmPlatform = "claude" | "chatgpt" | "gemini";
 
 export interface UsageRecord {
@@ -34,7 +42,7 @@ export interface RunnerOptions {
   secrets: ProviderSecrets;
   /** Awaited before the next event fires, so KV read-modify-writes never race each other. */
   onEvent: (event: PipelineEvent) => Promise<void>;
-  /** Best-effort stop check, polled between pause_turn resumption iterations. */
+  /** Stop check: hỏi trước mỗi lượt gọi model và lặp lại trong lúc request đang bay. */
   shouldStop?: () => Promise<boolean>;
 }
 
@@ -181,16 +189,7 @@ export class LLMRunner {
         throw new StoppedError("Đã dừng theo yêu cầu.");
       }
 
-      let response: LlmResponse;
-      if (this.isDryRun) {
-        response = await callFake(params);
-      } else if (this.platform === "chatgpt") {
-        response = await callOpenAI(params, this.secrets);
-      } else if (this.platform === "gemini") {
-        response = await callGemini(params, this.secrets);
-      } else {
-        response = await callAnthropic(params, this.secrets);
-      }
+      const response = await this.callProvider(stage, params);
 
       await this.recordUsage(stage, response, model);
 
@@ -213,6 +212,54 @@ export class LLMRunner {
         continue;
       }
       return response;
+    }
+  }
+
+  /* Gọi provider nhưng vẫn cắt được nửa chừng: một watcher hỏi shouldStop mỗi
+     STOP_POLL_MS và abort request, cộng một timeout cứng. Trước đây cờ dừng chỉ
+     được đọc giữa hai lượt gọi, nên bấm Dừng giữa bước Research phải chờ hết cả
+     lượt gọi đó — với request treo thì chờ vô hạn. */
+  private async callProvider(stage: string, params: CreateParams): Promise<LlmResponse> {
+    if (this.isDryRun) return callFake(params);
+
+    const controller = new AbortController();
+    let done = false;
+    let stopped = false;
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, PROVIDER_TIMEOUT_MS);
+
+    const watcher = (async () => {
+      while (!done && this.shouldStop) {
+        await new Promise((r) => setTimeout(r, STOP_POLL_MS));
+        if (done) return;
+        if (await this.shouldStop()) {
+          stopped = true;
+          controller.abort();
+          return;
+        }
+      }
+    })();
+
+    const withSignal: CreateParams = { ...params, signal: controller.signal };
+    try {
+      if (this.platform === "chatgpt") return await callOpenAI(withSignal, this.secrets);
+      if (this.platform === "gemini") return await callGemini(withSignal, this.secrets);
+      return await callAnthropic(withSignal, this.secrets);
+    } catch (exc) {
+      // Request bị chính ta cắt: lý do thật nằm ở cờ, không phải ở message của fetch.
+      if (stopped) throw new StoppedError("Đã dừng theo yêu cầu.");
+      if (timedOut) {
+        throw providerError(`${stage}: không phản hồi sau ${PROVIDER_TIMEOUT_MS / 1000}s.`);
+      }
+      throw exc;
+    } finally {
+      done = true;
+      clearTimeout(timer);
+      await watcher;
     }
   }
 

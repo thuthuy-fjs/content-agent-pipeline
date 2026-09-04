@@ -133,3 +133,11 @@ export function speechRate(language: string): number {
 export function defaultModel(env: { CONTENT_AGENT_MODEL?: string }): string {
   return env.CONTENT_AGENT_MODEL || "claude-opus-5";
 }
+
+/* Cờ debug: bật thì nguyên văn lỗi nhà cung cấp được đổ thêm vào log thô của
+   lần chạy, ngoài console.error. Khung báo lỗi đỏ vẫn chỉ một câu chung chung.
+   Tắt (mặc định) = giữ đúng quy tắc "lỗi bên thứ ba chỉ có một câu". */
+export function showProviderErrors(env: { SHOW_PROVIDER_ERRORS?: string }): boolean {
+  const raw = String(env.SHOW_PROVIDER_ERRORS ?? "").trim().toLowerCase();
+  return raw === "true" || raw === "1" || raw === "yes" || raw === "on";
+}

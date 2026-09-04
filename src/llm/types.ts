@@ -41,6 +41,8 @@ export interface CreateParams {
   messages: LlmMessage[];
   tools?: { type: string; name: string; max_uses: number }[];
   outputConfig?: OutputConfig;
+  /** Cắt request đang bay: người dùng bấm Dừng, hoặc chạm timeout của runner. */
+  signal?: AbortSignal;
 }
 
 export interface ProviderSecrets {
