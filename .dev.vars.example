@@ -1,0 +1,15 @@
+# Mẫu cho .dev.vars — copy thành `.dev.vars` rồi điền giá trị thật.
+#
+# File này CHỈ dùng cho `wrangler dev` cục bộ (Miniflare). Bản deploy thật đọc
+# secret từ Cloudflare, set bằng `wrangler secret put <TÊN>` — hai nơi tách biệt
+# nhau, sửa bên này không ảnh hưởng bên kia.
+#
+# Notion là nơi lưu duy nhất: thiếu NOTION_TOKEN/NOTION_DATA_SOURCE_ID thì
+# pipeline từ chối chạy thật ngay từ đầu (chỉ chạy được chế độ "Chạy thử").
+# Ba key model là tuỳ chọn — có key nào thì UI hiện nền tảng đó.
+
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+NOTION_TOKEN=
+NOTION_DATA_SOURCE_ID=

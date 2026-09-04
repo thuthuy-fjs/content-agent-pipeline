@@ -5,38 +5,74 @@ thời gian, rồi sinh title/description/tags. Thiết kế đầy đủ ở [S
 bản này là MVP v0.1 — chỉ **Research → Script → Metadata**, chưa có B-roll Agent
 và chưa tách Outline Agent riêng (script agent tự chia section).
 
-## Cài đặt
+Chạy trên **Cloudflare Workers** (TypeScript), lưu trạng thái run trong **Workers
+KV**, kết quả đẩy thẳng lên **Notion**. Không cần Durable Objects nên nằm gọn
+trong Workers Free plan.
 
-Máy này là Ubuntu 20.04 / Python 3.8, nên `pip` chỉ cài được `anthropic` 0.72
-(bản 1.x cần Python ≥ 3.10). Code chạy được cả hai: [llm.py](content_agent/llm.py)
-tự phát hiện SDK có `output_config` native hay không và fallback sang `extra_body`.
+## Cấu hình
+
+Secret chia làm hai nơi tách biệt:
+
+| Môi trường | Nguồn secret |
+|---|---|
+| `wrangler dev` cục bộ | File `.dev.vars` ở thư mục gốc |
+| Bản deploy thật | `wrangler secret put <TÊN>` (lưu trên Cloudflare) |
 
 ```bash
-python3 -m venv --without-pip .venv
-pip3 install --target .venv/lib/python3.8/site-packages -r requirements.txt
-cp .env.example .env
+cp .dev.vars.example .dev.vars   # rồi điền giá trị thật
+
+# Cho bản deploy:
+npx wrangler secret put NOTION_TOKEN
+npx wrangler secret put NOTION_DATA_SOURCE_ID
+npx wrangler secret put ANTHROPIC_API_KEY   # hoặc GEMINI_API_KEY / OPENAI_API_KEY
 ```
 
-## Backend
+Sửa `.dev.vars` **không** ảnh hưởng bản deploy và ngược lại — đây là chỗ dễ nhầm
+nhất: `wrangler secret put` xong mà chạy local vẫn báo thiếu key là vì vậy.
 
-Pipeline gọi thẳng Messages API bằng `ANTHROPIC_API_KEY` (thêm
-`ANTHROPIC_WORKSPACE_ID` nếu key gắn với identity — API sẽ báo
-`anthropic-workspace-id is required` nếu thiếu). Con số chi phí in ra ở cuối là
-tiền thật bị trừ vào credit API.
+Có key model nào thì UI hiện đúng nền tảng đó; có từ 2 nền tảng trở lên mới hiện
+ô chọn "Nền tảng LLM". Đổi model mặc định bằng biến `CONTENT_AGENT_MODEL` trong
+`wrangler.toml`.
 
-Có thể đổi sang Gemini hoặc OpenAI ngay trên web UI; khi đó cần
-`GEMINI_API_KEY` / `OPENAI_API_KEY` trong `.env`.
+## Chạy local
 
-Biến môi trường đã export sẵn luôn thắng file `.env`.
+**Máy này (Ubuntu 20.04, glibc 2.31) không chạy được `npm run dev` trực tiếp** —
+`workerd`, runtime của `wrangler dev`, cần glibc ≥ 2.35. Chạy trong container base
+mới hơn thay vào đó:
+
+```bash
+docker compose -f docker-compose.dev.yml up      # → http://localhost:8787
+```
+
+Lần đầu container tự `npm install` vào volume riêng (không đụng `node_modules` của
+host); các lần sau bỏ qua bước đó. KV được Miniflare giả lập cục bộ, không đụng dữ
+liệu KV thật trên Cloudflare.
+
+Máy nào glibc đủ mới (Ubuntu 22.04+, macOS…) thì dùng thẳng:
+
+```bash
+npm install
+npm run dev
+```
+
+Tick **"Chạy thử (dữ liệu giả, không gọi model)"** để chạy toàn bộ pipeline qua
+[src/llm/fake.ts](src/llm/fake.ts) — kiểm tra đường schema/packaging mà không tốn
+API quota và không cần Notion.
+
+## Deploy
+
+```bash
+npm run deploy          # chạy thẳng trên host, không cần Docker
+npx wrangler tail       # xem log, gồm cả các dòng "[provider] ..."
+```
+
+`wrangler deploy` chỉ bundle bằng esbuild rồi upload nên không đụng tới `workerd`,
+không dính ràng buộc glibc ở trên.
 
 ## Notion là nơi lưu duy nhất
 
-Pipeline **không ghi bất kỳ file nào xuống đĩa**, kể cả file tạm. Mỗi lần chạy
-thật tạo một page trong database Notion; web UI đọc ngược từ đó.
-
-```bash
-cp .env.example .env   # điền NOTION_TOKEN và NOTION_DATA_SOURCE_ID
-```
+Pipeline **không ghi bất kỳ file nào xuống đĩa** — Workers cũng không có đĩa để
+ghi. Mỗi lần chạy thật tạo một page trong database Notion; UI đọc ngược từ đó.
 
 1. Tạo integration tại notion.so/my-integrations, copy token.
 2. Mở database đích → "..." → Connections → thêm integration đó (thiếu bước này
@@ -44,79 +80,47 @@ cp .env.example .env   # điền NOTION_TOKEN và NOTION_DATA_SOURCE_ID
 3. `NOTION_DATA_SOURCE_ID` là **data source id**, không phải id trong URL trang —
    hai thứ này khác nhau và dễ nhầm.
 
-Thiếu cấu hình thì run thật bị **chặn ngay từ đầu**, trước khi gọi model, để
-không đốt hạn mức rồi mới phát hiện không có chỗ lưu.
+Thiếu cấu hình thì run thật bị **chặn ngay từ đầu**, trước khi gọi model, để không
+đốt hạn mức rồi mới phát hiện không có chỗ lưu.
 
 Mỗi page có hai phần: phần người đọc (kịch bản theo timeline, nguồn bấm được,
 metadata) và một khối `code` chứa **JSON gốc**. UI đọc lại từ khối JSON đó chứ
-không parse ngược block trình bày — block trình bày là bản dịch một chiều (độ
-tin cậy thành màu chữ, timestamp thành tiêu đề) nên parse ngược sẽ mất dữ liệu
-và vỡ khi ai đó sửa tay trang Notion.
+không parse ngược block trình bày — block trình bày là bản dịch một chiều (độ tin
+cậy thành màu chữ, timestamp thành tiêu đề) nên parse ngược sẽ mất dữ liệu và vỡ
+khi ai đó sửa tay trang Notion. Chạm trần 100 block thì block trình bày bị cắt
+trước, khối JSON gốc không bao giờ bị hy sinh.
 
 **Rủi ro cần biết:** không còn bản local nào để lùi về. Nếu đẩy Notion thất bại
-giữa chừng, toàn bộ JSON gốc được đổ ra stdout để copy lại thủ công trước khi
-báo lỗi — đó là lớp cứu vãn cuối cùng.
+giữa chừng, toàn bộ JSON gốc được ghi vào event log của run (xem được qua
+`/api/status`) để copy lại thủ công trước khi báo lỗi — đó là lớp cứu vãn cuối cùng.
 
-`--dry-run` không lưu ở đâu cả (không đĩa, không Notion): vẫn dùng để kiểm tra
+Chế độ chạy thử không lưu ở đâu cả (không đĩa, không Notion): vẫn dùng để kiểm tra
 đường code và schema, nhưng không xem được nội dung mẫu.
 
 ## Giao diện web
 
-```bash
-.venv/bin/python serve.py            # mở http://127.0.0.1:8765
-```
+Nhập chủ đề, chọn nền tảng / thời lượng (số + đơn vị giây hoặc phút, bỏ trống = 45
+giây) / model rồi bấm chạy; màn tiếp theo hiện tiến trình từng bước, xong thì dựng
+kết quả thành kịch bản có timeline, metadata, và danh sách nguồn bấm được.
 
-Nhập chủ đề, chọn nền tảng / thời lượng (bỏ trống = 45 giây) / model rồi bấm chạy;
-màn tiếp theo hiện tiến trình từng bước với token và chi phí của mỗi lượt gọi, xong
-thì dựng kết quả thành kịch bản có timeline, metadata, và danh sách nguồn bấm được.
-Trang cũng liệt kê các lần chạy trước, nhóm theo ngày, để mở lại.
+Nút "Lần chạy trước" mở một trang riêng: lọc theo ngày (giờ VN, UTC+7) và nền
+tảng, 20 bản ghi mỗi trang; bấm vào một dòng để mở lại kết quả từ Notion.
 
-Server chỉ dùng thư viện chuẩn ([web.py](content_agent/web.py) +
-[web_ui.html](content_agent/web_ui.html)), bind vào 127.0.0.1, và mỗi lần bấm chạy
-là một tiến trình `run.py` riêng — UI đọc stdout của nó chứ không gọi model trực tiếp.
-Link có dạng `#run/<id>` (đang chạy) và `#result/n%3A<page_id>/<tab>` (kết quả cũ,
-đọc từ Notion) nên F5 hay chia sẻ link đều không mất chỗ đang xem.
+Link có dạng `#run/<id>` (đang chạy) và `#result/n%3A<page_id>/<tab>` (kết quả cũ)
+nên F5 hay chia sẻ link đều không mất chỗ đang xem. Đóng tab giữa chừng cũng không
+huỷ run — pipeline chạy tiếp trong `ctx.waitUntil()`, mở lại ở mục "Đang chạy".
 
-Nút **Dừng** hiện trong lúc chạy: nó giết cả nhóm tiến trình (`run.py` lẫn `claude`
-con của nó) chứ không chỉ tiến trình cha, nếu không thì `claude` mồ côi vẫn chạy
-tiếp và vẫn tốn hạn mức.
-
-## Chạy bằng dòng lệnh
-
-```bash
-# Chạy thử toàn bộ pipeline bằng dữ liệu giả, không gọi API, không tốn tiền
-.venv/bin/python run.py --topic "Vì sao mèo sợ dưa chuột?" --dry-run
-
-# Chạy thật
-.venv/bin/python run.py --topic "Vì sao mèo sợ dưa chuột?" --platform tiktok --duration 45
-
-# Brief đầy đủ từ file JSON (mọi trường trong VideoBrief)
-.venv/bin/python run.py --brief brief.json
-```
-
-Tuỳ chọn khác: `--tone`, `--audience`, `--language`, `--must-include` (lặp được),
-`--avoid` (lặp được), `--model`, `--max-tokens`, `--quiet`.
-
-Model mặc định là `claude-opus-5`. Muốn rẻ hơn: `--model claude-sonnet-5` (hoặc
-đặt `CONTENT_AGENT_MODEL`). Với model không hỗ trợ web search bản mới hay
-`effort`, code tự hạ xuống biến thể cơ bản.
+Nút **Dừng** là best-effort: nó bật cờ `stopRequested` trong KV, runner kiểm tra cờ
+đó trước mỗi lượt gọi model rồi thoát sớm. Khác bản Python cũ (giết cả nhóm tiến
+trình), ở đây lượt gọi model đang bay vẫn chạy nốt.
 
 ### Chọn model theo từng bước
 
 Pipeline có 4 lượt gọi. `research.search` và `script` cần suy luận thật;
-`research.structure` (ghi chú → JSON) và `metadata` (kịch bản → title/tag) chỉ
-biến đổi dữ liệu có sẵn nên hạ model được:
-
-```bash
-# Hai bước phụ chạy Haiku, hai bước chính giữ Sonnet
-.venv/bin/python run.py --topic "..." --model claude-sonnet-5 --light-model claude-haiku-4-5
-
-# Chỉ định từng bước một (lặp được, thắng --light-model khi trùng)
-.venv/bin/python run.py --topic "..." --stage-model script=claude-opus-5
-```
-
-Bước nào chạy model khác mặc định thì dòng log ghi kèm tên model, và JSON gốc trên
-Notion lưu bản đồ trong `meta.usage.stage_models`. Trên UI đây là ô "Model bước phụ".
+`research.structure` (ghi chú → JSON) và `metadata` (kịch bản → title/tag) chỉ biến
+đổi dữ liệu có sẵn nên hạ model được — đó là ô **"Model bước phụ"** trên UI. Bước
+nào chạy model khác mặc định thì event `usage` ghi kèm tên model, và JSON gốc trên
+Notion lưu bản đồ trong `meta.usage.stage_models`.
 
 ## Output
 
@@ -128,33 +132,51 @@ Mỗi lần chạy tạo một page trong database Notion, không có file nào 
 | Kịch bản | Từng section theo timestamp: lời thoại + gợi ý hình ảnh |
 | Nghiên cứu | Fact kèm độ tin cậy và nguồn bấm được, góc kể chuyện, hook, điểm bỏ ngỏ |
 | Metadata | Các phương án title, description |
-| Dữ liệu gốc (JSON) | Toàn bộ brief/research/script/metadata/meta để web UI đọc lại chính xác |
+| Dữ liệu gốc (JSON) | Toàn bộ brief/research/script/metadata/meta để UI đọc lại chính xác |
 
 ## Kiến trúc
 
 ```
-run.py → cli.py → pipeline.py
-                    ├─ agents/research.py   2 lời gọi: web search → JSON hoá
-                    ├─ agents/script.py     1 lời gọi structured output
-                    ├─ agents/metadata.py   1 lời gọi structured output
-                    ├─ timeline.py          cộng dồn timestamp, đối chiếu thời lượng
-                    └─ render.py            script.md, description.txt
+public/index.html          UI thuần DOM, không build step, poll /api/status mỗi 700ms
+        │
+src/worker.ts              fetch handler + định tuyến, phục vụ static qua binding ASSETS
+        ├─ routes/run.ts       POST /api/run → ctx.waitUntil(runPipeline), /api/status, /api/stop
+        ├─ routes/history.ts   /api/runs (query Notion), /api/result (đọc lại 1 run)
+        ├─ routes/options.ts   /api/options — nền tảng/model khả dụng theo key đang có
+        │
+        └─ pipeline.ts         Research → Script → Metadata → Notion
+             ├─ agents/research.ts   2 lời gọi: web search → JSON hoá
+             ├─ agents/script.ts     1 lời gọi structured output
+             ├─ agents/metadata.ts   1 lời gọi structured output
+             ├─ llm/runner.ts        pause_turn, retry schema, model theo stage, đếm chi phí
+             ├─ llm/{anthropic,openai,gemini,fake}.ts   4 backend, cùng một shape trả về
+             ├─ timeline.ts          cộng dồn timestamp, đối chiếu thời lượng
+             ├─ notion.ts            ghi page + đọc lại từ khối JSON gốc
+             └─ kv-store.ts          trạng thái run + event log trong Workers KV
 ```
 
 Vài quyết định đáng chú ý:
 
 - **Timestamp do code tính, không do model.** Model chỉ đưa `duration_sec` mỗi
-  section; `timeline.py` cộng dồn và ước lượng thời lượng đọc thật từ số âm tiết
+  section; `timeline.ts` cộng dồn và ước lượng thời lượng đọc thật từ số âm tiết
   (2.5 âm tiết/giây cho tiếng Việt), rồi cảnh báo nếu lệch quá 15% so với mục tiêu.
-- **Research tách làm hai lời gọi.** Lời gọi có web search trả text (server tool
-  có thể `pause_turn` giữa chừng — `llm.py` nối lượt và gọi tiếp), lời gọi thứ hai
-  ép sang JSON. Tách ra thì rẻ và ổn định hơn gộp một.
+- **Research tách làm hai lời gọi.** Lời gọi có web search trả text (server tool có
+  thể `pause_turn` giữa chừng — `llm/runner.ts` nối lượt và gọi tiếp, tối đa 5 lần),
+  lời gọi thứ hai ép sang JSON. Tách ra thì rẻ và ổn định hơn gộp một.
 - **Structured output + retry.** Mọi stage trả JSON đều gửi kèm JSON Schema strict
-  sinh từ pydantic; sai schema thì retry tối đa 2 lần rồi dừng hẳn, không đoán bừa.
-- **Gate chất lượng.** Cảnh báo khi >30% fact có độ tin cậy thấp, khi fact thiếu
-  URL nguồn, và khi lời thoại vượt ngân sách giây của section.
+  (viết tay trong [src/schemas.ts](src/schemas.ts): inline hết `$ref`, `required` =
+  toàn bộ property, `additionalProperties: false`); sai schema thì retry tối đa 2
+  lần rồi dừng hẳn, không đoán bừa.
+- **Lỗi bên thứ ba chỉ có một câu.** Mọi thất bại khi gọi Anthropic/OpenAI/Gemini/
+  Notion đi qua `providerError()`: chi tiết thật ra `console.error` với tiền tố
+  `[provider] ` (xem bằng `wrangler tail`), còn người dùng chỉ thấy một câu chung.
+- **Trạng thái run nằm trong KV, không phải bộ nhớ tiến trình.** Worker không giữ
+  state giữa các request, nên mỗi event (`step`/`usage`/`warning`/`error`) được ghi
+  thẳng vào KV — khoảng 10-15 lượt ghi mỗi run, vừa với hạn mức free tier.
+- **Gate chất lượng.** Cảnh báo khi >30% fact có độ tin cậy thấp, khi fact thiếu URL
+  nguồn, và khi lời thoại vượt ngân sách giây của section.
 
 ## Chưa có
 
-B-roll Agent, Outline Agent tách riêng + checkpoint duyệt outline, TTS, dựng
-video. Roadmap ở [SPEC.md §6](SPEC.md).
+B-roll Agent, Outline Agent tách riêng + checkpoint duyệt outline, TTS, dựng video.
+Roadmap ở [SPEC.md §6](SPEC.md).

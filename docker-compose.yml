@@ -1,8 +1,0 @@
-services:
-  content-agent:
-    container_name: content-agent
-    build: .
-    ports:
-      - "8765:8765"
-    env_file:
-      - .env

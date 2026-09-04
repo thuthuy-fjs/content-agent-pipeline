@@ -4,46 +4,119 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A pipeline that turns one video topic into production documents: research notes with sources, a timed script with visual cues, and publishing metadata (title/description/tags). [SPEC.md](SPEC.md) is the design doc for the full pipeline; what exists today is MVP v0.1 — Research → Script → Metadata only. B-roll Agent, a separate Outline Agent, and the outline-approval checkpoint are specced but not built.
+A Cloudflare Worker (TypeScript) that turns one video topic into production documents:
+research notes with sources, a timed script with visual cues, and publishing metadata
+(title/description/tags). [SPEC.md](SPEC.md) is the design doc for the full pipeline;
+what exists today is MVP v0.1 — Research → Script → Metadata only. B-roll Agent, a
+separate Outline Agent, and the outline-approval checkpoint are specced but not built.
+
+The repo used to be a Python CLI + stdlib web server; that was fully replaced by this
+port. Nothing Python remains, and the CLI entry point is gone — the HTTP API is the
+only way in.
 
 ## Commands
 
 ```bash
-# Dry run — exercises the whole pipeline against a fake client, no API calls, no cost.
-# Use this to verify plumbing changes; there is no test suite.
-.venv/bin/python run.py --topic "bất kỳ chủ đề nào" --dry-run
+# Local dev. MUST go through Docker on this box — see the constraint below.
+docker compose -f docker-compose.dev.yml up      # → http://localhost:8787
 
-# Real run — gọi thẳng Messages API, cần ANTHROPIC_API_KEY trong .env.
-.venv/bin/python run.py --topic "..." --platform tiktok --duration 45
+# Deploy (runs natively on the host, no Docker needed)
+npm run deploy
+npx wrangler tail        # logs, including the "[provider] " detail lines
 
-# Dependencies (ensurepip is broken on this box, hence --without-pip + --target)
-python3 -m venv --without-pip .venv
-pip3 install --target .venv/lib/python3.8/site-packages -r requirements.txt
+npm run typecheck        # tsc --noEmit; there is no test suite
+npx wrangler deploy --dry-run --outdir=/tmp/out   # verify the bundle builds
 ```
 
-Always use `.venv/bin/python` — the system `python3` has no `anthropic`/`pydantic`.
+To exercise the whole pipeline with no API cost, tick **"Chạy thử"** in the UI (or
+POST `/api/run` with `dry_run: true`) — it routes every model call through
+[src/llm/fake.ts](src/llm/fake.ts), which generates data from whatever JSON Schema the
+request carries, so it's a real check of the schema and packaging path.
 
-## Environment constraint that shapes the code
+## Environment constraint that shapes local dev
 
-Ubuntu 20.04 / Python 3.8, so pip can only resolve `anthropic` 0.72 (1.x needs Python ≥ 3.10). That SDK has no `messages.parse` and no `output_config` parameter. `ClaudeRunner` in [content_agent/llm.py](content_agent/llm.py) therefore inspects `messages.create`'s signature at init and routes `output_config` (structured output format + effort) through `extra_body` when the parameter isn't native. Keep new API features behind that same check rather than assuming a modern SDK.
+This box is Ubuntu 20.04 (glibc 2.31), but `workerd` — the runtime behind
+`wrangler dev` — needs glibc ≥ 2.35. So **`npm run dev` cannot run directly here**;
+`docker-compose.dev.yml` runs the same command inside `node:20-bookworm` (glibc 2.36),
+with `node_modules` and the npm cache in named volumes so the host's copies aren't
+shadowed. `--remote` does not sidestep this on wrangler 3.x — it still spawns a local
+`workerd` proxy. `wrangler deploy` is unaffected (esbuild bundle + upload only).
 
 ## Architecture
 
-`run.py` → [cli.py](content_agent/cli.py) → [pipeline.py](content_agent/pipeline.py), which calls three agents in order and pushes the result to Notion. **Nothing is ever written to disk** — no output directory, no temp files. `cli.py` refuses to start a real run when Notion isn't configured, before any model call, so a missing config can't burn quota with nowhere to store the result.
+`public/index.html` (vanilla DOM, no build step) → [src/worker.ts](src/worker.ts)
+(routing + static assets via the `ASSETS` binding) → `src/routes/*` →
+[src/pipeline.ts](src/pipeline.ts), which calls three agents in order and pushes the
+result to Notion.
 
-`serve.py` → [web.py](content_agent/web.py) is a second, independent entry point: a stdlib-only local web UI that spawns `run.py` as a subprocess and parses its stdout into structured events. It never imports the agents, so the CLI stays the single execution path — but that also means **the stdout format is a contract**: the regexes at the top of `web.py` (`[i/n] Name...`, `  · stage: N in / M out ($X)[ · model]`, `Xong -> path`, `Dừng pipeline: ...`) must be updated together with any change to what `cli.py`/`llm.py` print. The ` · model` suffix on a usage line appears only when that stage ran a model other than `--model`.
+- **Run state lives in Workers KV, not process memory.** A Worker keeps nothing between
+  requests, so `POST /api/run` writes a `run:{id}` record and kicks the pipeline off via
+  `ctx.waitUntil()`; the browser polls `/api/status?id&since` every 700ms.
+  [src/kv-store.ts](src/kv-store.ts) owns that record. Per-key `metadata` carries the
+  fields `/api/active` needs, so listing active runs costs a `list()` and no reads.
+  Budget roughly 10-15 KV writes per run (one per event) — that's what keeps this inside
+  the free tier, so don't add per-token writes.
+- **Workers KV rejects `expirationTtl` below 60 seconds.** The history cache TTL is
+  pinned at 60 for exactly this reason; anything lower is a 400 at runtime, not a
+  compile error.
+- **Lỗi bên thứ ba chỉ có một câu.** Every failure calling Anthropic/OpenAI/Gemini/Notion
+  goes through `providerError()` in [src/llm/errors.ts](src/llm/errors.ts): the real
+  detail goes to `console.error` with a `[provider] ` prefix (visible in `wrangler tail`),
+  while `ProviderError` only ever carries `PROVIDER_UNAVAILABLE` from
+  [src/config.ts](src/config.ts). `pipeline.ts`'s outer catch re-sanitizes anything that
+  is *not* a `ProviderError` before it reaches KV — never let a raw exception message
+  reach the client.
+- **One backend per platform.** `LLMRunner.platform` picks it: `claude` hits the
+  Anthropic Messages API, `chatgpt`/`gemini` hand-roll their own request shapes in
+  `src/llm/openai.ts` / `src/llm/gemini.ts` and normalize the reply into the same
+  `LlmResponse`. Anything added to `create()`'s params must be translated in those two
+  too, or the non-Claude platforms silently ignore it.
+- **[src/llm/runner.ts](src/llm/runner.ts)** is the only place that talks to a model.
+  Every agent goes through `.text()` or `.structured()`, which centralize: `pause_turn`
+  resumption (web search is a server tool and can pause mid-turn, max 5 restarts),
+  schema-violation retries (2, feeding the bad output plus the error back into the
+  conversation), `refusal`/`max_tokens` as hard stops, the best-effort stop check, and
+  per-stage token/cost accounting.
+- **[src/schemas.ts](src/schemas.ts)** holds hand-written JSON Schemas *and* hand-written
+  runtime validators — deliberately not generated from each other. The schemas must stay
+  strict (every `$ref` inlined, `required` listing every property, `additionalProperties:
+  false`) or structured output rejects them; the validators must stay in sync by hand when
+  a field changes.
+- **Per-stage models.** `LLMRunner.stageModels` maps a stage name to a model that
+  overrides `model` for that call only; `modelFor()` strips the `#N` retry suffix before
+  lookup. Every model-dependent decision must go through the per-call model, not
+  `this.model` — `supportsModernFeatures` (effort), `estimateCostUsd`, and `webSearchTool()`
+  in the research agent all do. `PIPELINE_STAGES`/`LIGHT_STAGES` in `src/config.ts` are
+  the source of truth for valid stage names.
+- **[src/timeline.ts](src/timeline.ts)** owns all arithmetic the model must not do: the
+  model only emits `duration_sec` per section, and timestamps, syllable-based
+  spoken-duration estimates, and the ±15% drift check are computed here. `countSyllables`
+  must use a Unicode-aware alnum test (`\p{L}\p{N}`) or Vietnamese diacritics undercount.
+- **Notion is the only store.** [src/notion.ts](src/notion.ts) does both directions.
+  Writing: one page per real run, whose blocks are a one-way human-readable rendering
+  *plus* a `code` block holding the run's raw JSON. Reading: `readRun()` parses that JSON
+  block — never the pretty blocks, which lose data (confidence becomes a text colour,
+  timestamps become headings) and break the moment someone edits the page by hand. When
+  the 100-block ceiling is hit, pretty blocks are dropped first; the raw JSON block is
+  never sacrificed. `timeline`/`duration_report`/`script_md` are recomputed from
+  `script`+`brief` on read rather than stored, since they're deterministic.
+- **A failed Notion push is fatal.** With no local copy to fall back on, `pipeline.ts`
+  dumps the full raw JSON into the run's event log before failing — last-resort recovery
+  for a run that already spent quota. Unlike the Python original this is unconditional;
+  a Worker has no terminal to fall back to. Don't "simplify" that dump away.
+- **`STEP_PLAN` in `public/index.html` is coupled to the step names `pipeline.ts` emits**
+  (`"Research"`, `"Script"`, `"Metadata"`). Change one, change both.
 
-- **Lỗi bên thứ ba chỉ có một câu.** Mọi thất bại khi gọi Anthropic/OpenAI/Gemini/Notion đi qua `provider_error()` trong [llm.py](content_agent/llm.py): chi tiết thật in ra stderr với tiền tố `[provider] `, còn `ContentAgentError` chỉ mang `PROVIDER_UNAVAILABLE` từ [config.py](content_agent/config.py). `web.py` gộp stderr vào stdout nên nó lọc bỏ các dòng `[provider] ` trước khi dựng event — đừng thêm chi tiết lỗi nhà cung cấp vào thông báo cho người dùng.
-- **One backend per platform.** `ClaudeRunner.platform` picks it: `claude` goes through the Anthropic SDK with `ANTHROPIC_API_KEY` (there is no CLI/subscription path — it was removed), while `chatgpt`/`gemini` hand-roll HTTP in `_call_openai_api`/`_call_gemini_api` and normalize the reply into the same `SimpleNamespace` shape the Anthropic SDK returns. Anything added to `_create`'s params must be translated in those two too, or the non-Claude platforms silently ignore it.
-- **[llm.py](content_agent/llm.py)** is the only place that talks to the API. Every agent goes through `ClaudeRunner.text()` or `.structured()`, which centralize: `pause_turn` resumption (web search is a server tool and can pause mid-turn), schema-violation retries, `refusal`/`max_tokens` handling as hard stops, and per-stage token/cost accounting.
-- **[schemas.py](content_agent/schemas.py)** holds the pydantic output contracts plus `strict_json_schema()`, which inlines `$defs`/`$ref`, marks every property required, and sets `additionalProperties: false` — the API's structured-output format rejects the raw pydantic schema otherwise.
-- **Per-stage models.** `ClaudeRunner.stage_models` maps a stage name to a model that overrides `model` for that call only; `model_for()` strips the `#N` retry suffix before lookup. Every model-dependent decision must go through the per-call model, not `self.model` — `supports_modern_features` (effort), `estimate_cost_usd`, and `web_search_tool()` in the research agent all do. `PIPELINE_STAGES`/`LIGHT_STAGES` in [config.py](content_agent/config.py) are the source of truth for valid stage names; the CLI's `--light-model` is sugar for `--stage-model` over `LIGHT_STAGES`.
-- **[timeline.py](content_agent/timeline.py)** owns all arithmetic the model must not do: the model only emits `duration_sec` per section, and timestamps, syllable-based spoken-duration estimates, and the ±15% drift check are computed here.
-- **[dotenv.py](content_agent/dotenv.py)** loads `.env` from the package `__init__` — it must run before `config`/`llm` import, since both read `os.environ` at import time. Exported vars win over the file.
-- **[config.py](content_agent/config.py)** gates model-dependent features. `supports_modern_features()` decides between the two web-search tool types and whether `effort` is sent at all — older models error on `effort`, so never send it unconditionally.
-- **[fake.py](content_agent/fake.py)** generates responses from whatever JSON Schema the request carries, which is what makes `--dry-run` a real check of the schema and packaging path.
+## Secrets
 
-- **Notion is the only store.** [notion_publish.py](content_agent/notion_publish.py) does both directions. Writing: one page per real run, whose blocks are a one-way human-readable rendering *plus* a `code` block holding the run's raw JSON. Reading: `read_run()` parses that JSON block — never the pretty blocks, which lose data (confidence becomes a text colour, timestamps become headings) and break the moment someone edits the page by hand. When the 100-block ceiling is hit, pretty blocks are dropped first; the raw JSON block is never sacrificed. `timeline`/`duration_report` are recomputed from `script`+`brief` on read rather than stored, since they're deterministic.
-- **A failed Notion push is fatal now.** With no local copy to fall back on, `pipeline.py` dumps the full raw JSON to stdout before raising `ContentAgentError` — last-resort recovery for a run that already spent quota. Don't "simplify" that dump away.
+Two separate stores, and confusing them is the most common failure:
 
-Prompts live next to their agent in [content_agent/agents/](content_agent/agents/) and are written in Vietnamese, matching the default output language.
+- Local `wrangler dev` reads `.dev.vars` (gitignored; template at `.dev.vars.example`).
+- The deployed Worker reads secrets set via `wrangler secret put`.
+
+Setting one does nothing for the other. `env` is passed into the fetch handler, so there
+is no import-order concern like the old Python `dotenv` module had — but `DEFAULT_MODEL`
+is therefore a function (`defaultModel(env)`), not a module constant.
+
+Agent prompts live next to their agent in [src/agents/](src/agents/) and are written in
+Vietnamese, matching the default output language.

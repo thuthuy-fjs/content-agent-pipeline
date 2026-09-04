@@ -1,0 +1,21 @@
+name = "content-agent"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[kv_namespaces]]
+binding = "RUNS_KV"
+id = "f56f7c53bd5546a3a58df2b6412658e3"
+preview_id = "25fd87d932584ce39425d170fdabf222"
+
+# Secrets (set via `wrangler secret put <NAME>`, not stored here):
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
+#   NOTION_TOKEN, NOTION_DATA_SOURCE_ID
+#
+# Optional plain var override:
+# [vars]
+# CONTENT_AGENT_MODEL = "claude-opus-5"
