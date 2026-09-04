@@ -41,7 +41,7 @@ Có key model nào thì UI hiện đúng nền tảng đó; có từ 2 nền t�
 mới hơn thay vào đó:
 
 ```bash
-docker compose -f docker-compose.dev.yml up      # → http://localhost:8787
+docker compose up                                # → http://localhost:8787
 ```
 
 Lần đầu container tự `npm install` vào volume riêng (không đụng `node_modules` của

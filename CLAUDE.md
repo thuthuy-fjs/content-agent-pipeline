@@ -18,7 +18,7 @@ only way in.
 
 ```bash
 # Local dev. MUST go through Docker on this box — see the constraint below.
-docker compose -f docker-compose.dev.yml up      # → http://localhost:8787
+docker compose up                                # → http://localhost:8787
 
 # Deploy (runs natively on the host, no Docker needed)
 npm run deploy
@@ -37,7 +37,7 @@ request carries, so it's a real check of the schema and packaging path.
 
 This box is Ubuntu 20.04 (glibc 2.31), but `workerd` — the runtime behind
 `wrangler dev` — needs glibc ≥ 2.35. So **`npm run dev` cannot run directly here**;
-`docker-compose.dev.yml` runs the same command inside `node:20-bookworm` (glibc 2.36),
+`docker-compose.yml` runs the same command inside `node:20-bookworm` (glibc 2.36),
 with `node_modules` and the npm cache in named volumes so the host's copies aren't
 shadowed. `--remote` does not sidestep this on wrangler 3.x — it still spawns a local
 `workerd` proxy. `wrangler deploy` is unaffected (esbuild bundle + upload only).
