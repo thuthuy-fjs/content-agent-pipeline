@@ -3,10 +3,15 @@
 // per run (one per event) to stay inside the free tier, and note KV is
 // eventually consistent — fine for a single-user tool, not for shared state.
 
+import type { VideoBrief } from "./brief";
 import type { PipelineEvent } from "./events";
+// Chỉ import type: bị pipeline.ts import ngược lại (runtime), nhưng import type
+// bị xoá hoàn toàn lúc biên dịch nên không tạo vòng lặp runtime thật sự.
+import type { PipelineOptions } from "./pipeline";
+import type { OutlineDraft, ResearchNotes } from "./schemas";
 import { vnClock } from "./webConfig";
 
-export type RunStatus = "running" | "done" | "error" | "stopped";
+export type RunStatus = "running" | "awaiting_outline" | "done" | "error" | "stopped";
 
 /** Dùng ở cả /api/stop lẫn nhánh StoppedError của pipeline — phải giống nhau. */
 export const STOP_MESSAGE = "Đã dừng theo yêu cầu.";
@@ -22,6 +27,14 @@ export interface RunBrief {
   dry_run: boolean;
 }
 
+/** Đủ để Phase B (continuePipeline) hoặc regenerateOutline chạy tiếp mà không
+    cần tham số truyền tay — chỉ tồn tại trong lúc status là "awaiting_outline". */
+export interface RunResumeState {
+  videoBrief: VideoBrief;
+  research: ResearchNotes;
+  options: PipelineOptions;
+}
+
 export interface RunRecord {
   id: string;
   brief: RunBrief;
@@ -32,6 +45,12 @@ export interface RunRecord {
   error: string | null;
   result: unknown | null;
   stopRequested: boolean;
+  /** Bản outline mới nhất — có ngay khi status chuyển "awaiting_outline", vẫn
+      giữ lại sau khi duyệt (chỉ để hiển thị, không dùng để resume nữa). */
+  outline: OutlineDraft | null;
+  /** Chỉ khác null trong lúc chờ duyệt; continuePipeline() xoá ngay khi bắt đầu
+      dùng để tránh double-approve chạy lại Script từ cùng state cũ. */
+  resume: RunResumeState | null;
 }
 
 export interface RunMetadata {
@@ -79,6 +98,8 @@ export async function createRun(kv: KVNamespace, id: string, brief: RunBrief): P
     error: null,
     result: null,
     stopRequested: false,
+    outline: null,
+    resume: null,
   };
   await kv.put(key(id), JSON.stringify(record), { metadata: metadataFor(record) });
   return record;
@@ -117,11 +138,15 @@ export function snapshot(record: RunRecord, since = 0): Record<string, unknown> 
     notion_url: record.notion_url,
     error: record.error,
     result: record.result,
+    // outline hiện cho client render panel duyệt; resume KHÔNG gửi — chỉ là
+    // plumbing nội bộ để continuePipeline()/regenerateOutline() chạy tiếp.
+    outline: record.outline,
   };
 }
 
 export interface ActiveRunSummary {
   id: string;
+  status: RunStatus;
   topic: string;
   platform: string;
   duration: number;
@@ -141,9 +166,12 @@ export async function listActiveRuns(kv: KVNamespace): Promise<ActiveRunSummary[
     const page = await kv.list<RunMetadata>({ prefix: "run:", cursor });
     for (const entry of page.keys) {
       const meta = entry.metadata;
-      if (!meta || meta.status !== "running") continue;
+      // "Đang chạy" trên UI gồm cả run đang tạm dừng chờ duyệt outline — vẫn cần
+      // người dùng thấy để bấm vào, chỉ là chưa có gì để đếm giờ chạy tiếp.
+      if (!meta || (meta.status !== "running" && meta.status !== "awaiting_outline")) continue;
       out.push({
         id: entry.name.slice("run:".length),
+        status: meta.status,
         topic: meta.topic,
         platform: meta.platform,
         duration: meta.duration,
@@ -171,6 +199,29 @@ export async function requestStop(kv: KVNamespace, id: string): Promise<void> {
 
 export async function isStopRequested(kv: KVNamespace, id: string): Promise<boolean> {
   return (await kv.get(`stop:${id}`)) !== null;
+}
+
+export interface StopResult {
+  found: boolean;
+  wasActive: boolean;
+  status: RunStatus | null;
+}
+
+/** Dùng chung cho POST /api/stop và nhánh "cancel" của POST /api/outline —
+    "dừng run đang chạy" và "huỷ run đang chờ duyệt" là cùng một hành động ghi
+    trạng thái, chỉ khác điểm gọi. */
+export async function stopRun(kv: KVNamespace, id: string): Promise<StopResult> {
+  await requestStop(kv, id);
+  let wasActive = false;
+  const record = await updateRun(kv, id, (r) => {
+    wasActive = r.status === "running" || r.status === "awaiting_outline";
+    if (!wasActive) return;
+    r.stopRequested = true;
+    r.status = "stopped";
+    r.error = STOP_MESSAGE;
+    r.resume = null;
+  });
+  return { found: Boolean(record), wasActive, status: record?.status ?? null };
 }
 
 /* Lượt chạy của một lần truy cập. Key nằm ngoài prefix "run:" nên không lọt vào

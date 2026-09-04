@@ -3,21 +3,11 @@
 import { makeBrief } from "../brief";
 import { DEFAULT_MAX_TOKENS, LIGHT_STAGES, PLATFORMS, defaultModel } from "../config";
 import { ValidationError, jsonResponse } from "../http";
-import {
-  STOP_MESSAGE,
-  claimVisit,
-  createRun,
-  getRun,
-  listActiveRuns,
-  requestStop,
-  snapshot,
-  updateRun,
-  type RunBrief,
-} from "../kv-store";
+import { claimVisit, createRun, getRun, listActiveRuns, snapshot, stopRun, type RunBrief } from "../kv-store";
 import type { LlmPlatform } from "../llm/runner";
 import { isConfigured } from "../notion";
 import type { PipelineEnv, PipelineOptions } from "../pipeline";
-import { runPipeline } from "../pipeline";
+import { continuePipeline, regenerateOutline, runPipeline } from "../pipeline";
 import {
   DEFAULT_DURATION_SEC,
   MAX_DURATION_SEC,
@@ -172,27 +162,62 @@ export async function handleStop(request: Request, kv: KVNamespace): Promise<Res
     return jsonResponse({ error: (exc as Error).message }, 400);
   }
   const id = String(payload.id || "");
-  // Cờ ở key riêng phải được ghi TRƯỚC bản ghi: nếu bản ghi bị một emit() ghi
-  // đè, pipeline vẫn thấy cờ này ở lần kiểm tra kế tiếp và tự thoát.
-  await requestStop(kv, id);
-  let wasRunning = false;
-  const record = await updateRun(kv, id, (r) => {
-    wasRunning = r.status === "running";
-    if (!wasRunning) return;
-    r.stopRequested = true;
-    /* Chốt sổ ngay tại đây chứ không chỉ đặt cờ rồi chờ pipeline tự đổi trạng
-       thái. Pipeline sống trong ctx.waitUntil() của một tiến trình Worker: chỉ
-       cần Worker reload/deploy/crash là nó chết ngang, không ai còn đọc cờ, và
-       bản ghi kẹt "running" vĩnh viễn — nút Dừng trông như vô tác dụng. Nếu
-       pipeline vẫn sống thì nó tự thoát ở lần kiểm tra kế tiếp và ghi đúng cùng
-       trạng thái này, nên chốt trước không sai lệch gì. */
-    r.status = "stopped";
-    r.error = STOP_MESSAGE;
-  });
-  if (!record) return jsonResponse({ error: "Không tìm thấy lần chạy này." }, 404);
-  return jsonResponse({ stopped: wasRunning, status: record.status });
+  /* stopRun() ghi cờ ở key riêng TRƯỚC khi chốt bản ghi (nếu bản ghi bị một
+     emit() ghi đè, pipeline vẫn thấy cờ này ở lần kiểm tra kế tiếp và tự
+     thoát), và chốt sổ ngay tại đây chứ không chỉ đặt cờ rồi chờ pipeline tự
+     đổi trạng thái — pipeline sống trong ctx.waitUntil() của một tiến trình
+     Worker, chỉ cần Worker reload/deploy/crash là nó chết ngang, không ai còn
+     đọc cờ, và bản ghi kẹt "running"/"awaiting_outline" vĩnh viễn. */
+  const result = await stopRun(kv, id);
+  if (!result.found) return jsonResponse({ error: "Không tìm thấy lần chạy này." }, 404);
+  return jsonResponse({ stopped: result.wasActive, status: result.status });
 }
 
 export async function handleActive(kv: KVNamespace): Promise<Response> {
   return jsonResponse({ runs: await listActiveRuns(kv) });
+}
+
+const OUTLINE_ACTIONS = new Set(["approve", "regenerate", "cancel"]);
+
+export async function handleOutlineDecision(
+  request: Request,
+  env: PipelineEnv,
+  ctx: ExecutionContext,
+  kv: KVNamespace
+): Promise<Response> {
+  let payload: any;
+  try {
+    payload = await request.json();
+  } catch (exc) {
+    return jsonResponse({ error: (exc as Error).message }, 400);
+  }
+  const id = String(payload.id || "");
+  const action = String(payload.action || "");
+  if (!OUTLINE_ACTIONS.has(action)) {
+    return jsonResponse({ error: `Hành động không hợp lệ: ${action}` }, 400);
+  }
+
+  const record = await getRun(kv, id);
+  if (!record) return jsonResponse({ error: "Không tìm thấy lần chạy này." }, 404);
+
+  if (action === "cancel") {
+    const result = await stopRun(kv, id);
+    return jsonResponse({ status: result.status });
+  }
+
+  // approve/regenerate chỉ hợp lệ trong lúc thật sự đang chờ duyệt — chặn
+  // double-click gửi hai request cùng lúc chạy tiếp pipeline hai lần.
+  if (record.status !== "awaiting_outline") {
+    return jsonResponse({ error: "Lần chạy này không (còn) chờ duyệt outline." }, 409);
+  }
+
+  if (action === "approve") {
+    ctx.waitUntil(continuePipeline(kv, id, env));
+    return jsonResponse({ status: "running" });
+  }
+
+  // regenerate: giữ nguyên awaiting_outline, chỉ đổi outline khi bản mới xong.
+  const feedback = String(payload.feedback || "").trim();
+  ctx.waitUntil(regenerateOutline(kv, id, env, feedback || undefined));
+  return jsonResponse({ status: "awaiting_outline" });
 }

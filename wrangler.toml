@@ -14,7 +14,12 @@ preview_id = "25fd87d932584ce39425d170fdabf222"
 
 # Secrets (set via `wrangler secret put <NAME>`, not stored here):
 #   ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
-#   NOTION_TOKEN, NOTION_DATA_SOURCE_ID
+#   NOTION_TOKEN, NOTION_DATA_SOURCE_ID, ACCESS_TOKEN
+#
+# ACCESS_TOKEN is a password, not a plain var like the flags below — never put
+# its real value in this file (it's committed to git). Set it -> every /api/*
+# request needs header X-Access-Token to match, or gets 401; the static page
+# stays open either way. Unset -> no auth at all (default).
 #
 # Optional plain var overrides:
 # [vars]

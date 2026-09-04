@@ -8,9 +8,13 @@
 import { makeBrief, type VideoBrief } from "./brief";
 import { renderScriptMd } from "./render";
 import {
+  validateBrollList,
+  validateOutlineDraft,
   validateResearchNotes,
   validateScriptDraft,
   validateVideoMetadata,
+  type BrollList,
+  type OutlineDraft,
   type ResearchNotes,
   type ScriptDraft,
   type VideoMetadata,
@@ -201,8 +205,10 @@ export function buildTagProperties(metadata: VideoMetadata): Record<string, any>
 // ---------- page content ----------
 
 export function buildBlocks(
+  outline: OutlineDraft,
   research: ResearchNotes,
   timeline: TimedSection[],
+  broll: BrollList,
   metadata: VideoMetadata,
   warnings: string[],
   rawPayload: Record<string, unknown>
@@ -211,12 +217,31 @@ export function buildBlocks(
 
   if (warnings.length) pretty.push(callout(warnings.join("\n")));
 
+  pretty.push(heading(2, "Outline"));
+  for (const section of outline.structure) {
+    pretty.push(bulleted(`${section.section} (${section.duration_sec}s) — ${section.goal}`));
+  }
+
   pretty.push(heading(2, "Kịch bản"));
   for (const section of timeline) {
     const span = `[${formatTimestamp(section.start_sec)}–${formatTimestamp(section.end_sec)}] ${section.name}`;
     pretty.push(heading(3, span));
     pretty.push(paragraph(section.narration));
     pretty.push(paragraph(`🎬 ${section.visual_cue}`, "gray_background"));
+  }
+
+  if (broll.items.length) {
+    pretty.push(heading(2, "B-roll"));
+    // Khớp theo vị trí mảng với timeline, không theo tên — xem schemas.ts.
+    broll.items.forEach((item, i) => {
+      const section = timeline[i];
+      const label = section
+        ? `[${formatTimestamp(section.start_sec)}–${formatTimestamp(section.end_sec)}] ${item.section}`
+        : item.section;
+      pretty.push(heading(3, label));
+      pretty.push(paragraph(`${item.shot_type} — ${item.search_keywords.join(", ")}`));
+      if (item.note) pretty.push(paragraph(`📝 ${item.note}`, "gray_background"));
+    });
   }
 
   pretty.push(heading(2, "Nghiên cứu"));
@@ -265,7 +290,9 @@ export interface RunSummary {
 export async function publishRun(
   brief: VideoBrief,
   research: ResearchNotes,
+  outline: OutlineDraft,
   script: ScriptDraft,
+  broll: BrollList,
   timeline: TimedSection[],
   metadata: VideoMetadata,
   summary: RunSummary,
@@ -274,7 +301,7 @@ export async function publishRun(
   const dataSourceId = env.NOTION_DATA_SOURCE_ID;
   if (!dataSourceId) throw new NotionPublishError("Thiếu NOTION_DATA_SOURCE_ID.");
 
-  const rawPayload = { brief, research, script, metadata, meta: summary };
+  const rawPayload = { brief, research, outline, script, broll, metadata, meta: summary };
   const properties = { ...buildProperties(brief, summary), ...buildTagProperties(metadata) };
 
   const page = await call(
@@ -283,7 +310,7 @@ export async function publishRun(
     {
       parent: { type: "data_source_id", data_source_id: dataSourceId },
       properties,
-      children: buildBlocks(research, timeline, metadata, summary.warnings || [], rawPayload),
+      children: buildBlocks(outline, research, timeline, broll, metadata, summary.warnings || [], rawPayload),
     },
     "POST"
   );
@@ -346,7 +373,11 @@ export interface ReadRunResult {
   notion_page_id: string;
   brief: VideoBrief;
   research: ResearchNotes;
+  // null cho các run đã xuất bản trước khi có Outline/B-roll Agent — raw JSON
+  // của run cũ không có hai trường này, không được coi là lỗi đọc.
+  outline: OutlineDraft | null;
   script: ScriptDraft;
+  broll: BrollList | null;
   title_options: string[];
   tags: { tags: string[]; hashtags: string[] };
   meta: Record<string, unknown>;
@@ -361,7 +392,9 @@ export async function readRun(pageId: string, env: NotionEnv): Promise<ReadRunRe
 
   const brief = makeBrief(raw.brief as any);
   const research = validateResearchNotes(raw.research);
+  const outline = raw.outline != null ? validateOutlineDraft(raw.outline) : null;
   const script = validateScriptDraft(raw.script);
+  const broll = raw.broll != null ? validateBrollList(raw.broll) : null;
   const metadata = validateVideoMetadata(raw.metadata);
 
   // timeline/report are pure, deterministic arithmetic over script+brief, so
@@ -376,7 +409,9 @@ export async function readRun(pageId: string, env: NotionEnv): Promise<ReadRunRe
     notion_page_id: pageId,
     brief,
     research,
+    outline,
     script,
+    broll,
     title_options: metadata.title_options,
     tags: { tags: metadata.tags, hashtags: metadata.hashtags },
     meta,

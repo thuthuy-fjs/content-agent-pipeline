@@ -19,3 +19,6 @@ SINGLE_RUN_PER_VISIT=
 
 # Debug (tuỳ chọn)
 SHOW_PROVIDER_ERRORS=
+
+# Xác thực (tuỳ chọn)
+ACCESS_TOKEN=

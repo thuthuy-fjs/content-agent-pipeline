@@ -29,6 +29,16 @@ export function lowConfidenceRatio(research: ResearchNotes): number {
   return low / research.facts.length;
 }
 
+export interface OutlineSection {
+  section: string;
+  duration_sec: number;
+  goal: string;
+}
+
+export interface OutlineDraft {
+  structure: OutlineSection[];
+}
+
 export interface ScriptSection {
   name: string;
   goal: string;
@@ -47,6 +57,20 @@ export interface VideoMetadata {
   description: string;
   tags: string[];
   hashtags: string[];
+}
+
+export interface BrollEntry {
+  section: string;
+  search_keywords: string[];
+  shot_type: string;
+  note: string;
+}
+
+// Khớp theo VỊ TRÍ MẢNG với timeline/script.sections, không theo tên — model
+// không tự bịa timestamp (đúng nguyên tắc trong timeline.ts), nên B-roll Agent
+// chỉ cần trả đúng thứ tự, không cần lặp lại start/end.
+export interface BrollList {
+  items: BrollEntry[];
 }
 
 const FACT_SCHEMA = {
@@ -70,6 +94,26 @@ export const RESEARCH_NOTES_SCHEMA = {
     open_questions: { type: "array", items: { type: "string" } },
   },
   required: ["topic_summary", "facts", "angle_suggestions", "hook_ideas", "open_questions"],
+  additionalProperties: false,
+};
+
+const OUTLINE_SECTION_SCHEMA = {
+  type: "object",
+  properties: {
+    section: { type: "string" },
+    duration_sec: { type: "integer" },
+    goal: { type: "string" },
+  },
+  required: ["section", "duration_sec", "goal"],
+  additionalProperties: false,
+};
+
+export const OUTLINE_SCHEMA = {
+  type: "object",
+  properties: {
+    structure: { type: "array", items: OUTLINE_SECTION_SCHEMA },
+  },
+  required: ["structure"],
   additionalProperties: false,
 };
 
@@ -105,6 +149,27 @@ export const VIDEO_METADATA_SCHEMA = {
     hashtags: { type: "array", items: { type: "string" } },
   },
   required: ["title_options", "description", "tags", "hashtags"],
+  additionalProperties: false,
+};
+
+const BROLL_ENTRY_SCHEMA = {
+  type: "object",
+  properties: {
+    section: { type: "string" },
+    search_keywords: { type: "array", items: { type: "string" } },
+    shot_type: { type: "string" },
+    note: { type: "string" },
+  },
+  required: ["section", "search_keywords", "shot_type", "note"],
+  additionalProperties: false,
+};
+
+export const BROLL_SCHEMA = {
+  type: "object",
+  properties: {
+    items: { type: "array", items: BROLL_ENTRY_SCHEMA },
+  },
+  required: ["items"],
   additionalProperties: false,
 };
 
@@ -149,6 +214,23 @@ export function validateResearchNotes(data: unknown): ResearchNotes {
   };
 }
 
+export function validateOutlineDraft(data: unknown): OutlineDraft {
+  if (typeof data !== "object" || data === null) fail("outline: not an object");
+  const d = data as Record<string, unknown>;
+  if (!Array.isArray(d.structure)) fail("outline: structure must be an array");
+  const structure: OutlineSection[] = d.structure.map((s, i) => {
+    if (typeof s !== "object" || s === null) fail(`outline: structure[${i}] not an object`);
+    const so = s as Record<string, unknown>;
+    if (!isString(so.section)) fail(`outline: structure[${i}].section must be a string`);
+    if (typeof so.duration_sec !== "number" || !Number.isFinite(so.duration_sec)) {
+      fail(`outline: structure[${i}].duration_sec must be a number`);
+    }
+    if (!isString(so.goal)) fail(`outline: structure[${i}].goal must be a string`);
+    return { section: so.section, duration_sec: so.duration_sec, goal: so.goal };
+  });
+  return { structure };
+}
+
 export function validateScriptDraft(data: unknown): ScriptDraft {
   if (typeof data !== "object" || data === null) fail("script draft: not an object");
   const d = data as Record<string, unknown>;
@@ -188,4 +270,20 @@ export function validateVideoMetadata(data: unknown): VideoMetadata {
     tags: d.tags,
     hashtags: d.hashtags,
   };
+}
+
+export function validateBrollList(data: unknown): BrollList {
+  if (typeof data !== "object" || data === null) fail("broll: not an object");
+  const d = data as Record<string, unknown>;
+  if (!Array.isArray(d.items)) fail("broll: items must be an array");
+  const items: BrollEntry[] = d.items.map((it, i) => {
+    if (typeof it !== "object" || it === null) fail(`broll: items[${i}] not an object`);
+    const io = it as Record<string, unknown>;
+    if (!isString(io.section)) fail(`broll: items[${i}].section must be a string`);
+    if (!isStringArray(io.search_keywords)) fail(`broll: items[${i}].search_keywords must be string[]`);
+    if (!isString(io.shot_type)) fail(`broll: items[${i}].shot_type must be a string`);
+    if (!isString(io.note)) fail(`broll: items[${i}].note must be a string`);
+    return { section: io.section, search_keywords: io.search_keywords, shot_type: io.shot_type, note: io.note };
+  });
+  return { items };
 }

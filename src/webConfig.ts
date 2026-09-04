@@ -40,6 +40,20 @@ export const VISIT_QUOTA_TTL_SEC = 86400;
 export const VISIT_QUOTA_MESSAGE =
   "Tài nguyên bị hạn chế: mỗi lượt truy cập chỉ được chạy pipeline một lần.";
 
+export const ACCESS_TOKEN_HEADER = "X-Access-Token";
+export const ACCESS_DENIED_MESSAGE = "Cần token truy cập.";
+
+/* Xác thực toàn bộ /api/* bằng một token dùng chung (bật bằng biến ACCESS_TOKEN
+   ở server, xem worker.ts). Không đặt biến -> trả về null -> auth tắt hẳn, mọi
+   request qua thẳng như trước — cùng quy ước "trống = tắt" với
+   SINGLE_RUN_PER_VISIT/SHOW_PROVIDER_ERRORS. So khớp bằng "==="; đây là công cụ
+   một người dùng, không đáng đánh đổi độ phức tạp của so sánh constant-time cho
+   một kênh timing-attack cần hàng nghìn request chính xác để khai thác. */
+export function requiredAccessToken(env: { ACCESS_TOKEN?: string }): string | null {
+  const token = String(env.ACCESS_TOKEN ?? "").trim();
+  return token || null;
+}
+
 /* Giờ VN cố định (UTC+7). Worker chạy ở UTC và không có "giờ địa phương" ổn
    định, nên cộng thẳng offset vào epoch rồi đọc bằng các getter UTC. */
 export const VN_UTC_OFFSET_MS = 7 * 3600 * 1000;

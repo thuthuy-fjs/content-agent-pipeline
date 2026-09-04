@@ -578,6 +578,26 @@
   </head>
   <body>
     <div class="wrap">
+      <!-- MÀN KHOÁ: chỉ hiện khi server bật ACCESS_TOKEN và /api/* trả 401 -->
+      <section id="screen-gate" class="hidden">
+        <div class="head">
+          <div>
+            <h1>Content Agent</h1>
+            <p class="sub" style="margin: 0">
+              Cần token truy cập để dùng công cụ này.
+            </p>
+          </div>
+        </div>
+        <div class="card">
+          <div id="gate-err" class="err hidden"></div>
+          <div class="field">
+            <label for="gate-token">Token truy cập</label>
+            <input id="gate-token" type="password" placeholder="Dán token vào đây" />
+          </div>
+          <button id="gate-go" class="primary">Vào</button>
+        </div>
+      </section>
+
       <!-- MÀN 1: NHẬP BRIEF -->
       <section id="screen-form">
         <div class="head">
@@ -735,6 +755,27 @@
         <div class="card">
           <div id="run-err" class="err hidden"></div>
           <ul class="steps" id="steps"></ul>
+          <div id="outline-panel" class="hidden" style="margin: 0 0 20px">
+            <h3 style="margin: 0 0 4px">Duyệt outline</h3>
+            <p class="sub" style="margin: 0 0 12px">
+              Xem hướng đi trước khi viết kịch bản đầy đủ.
+            </p>
+            <ul id="outline-list" class="plain"></ul>
+            <textarea
+              id="outline-feedback"
+              style="margin: 0 0 12px"
+              placeholder="Góp ý cho lần dựng lại (không bắt buộc) — vd: đổi góc kể chuyện, bỏ đoạn X..."
+            ></textarea>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap">
+              <button id="outline-approve" class="primary" style="width: auto">
+                Duyệt
+              </button>
+              <button id="outline-regenerate" class="ghost">
+                Yêu cầu làm lại
+              </button>
+              <button id="outline-cancel" class="ghost">Huỷ</button>
+            </div>
+          </div>
           <div class="bar">
             <span id="elapsed">0:00</span><span id="run-progress"></span>
           </div>
@@ -777,6 +818,7 @@
       };
       const show = (id) =>
         [
+          "screen-gate",
           "screen-form",
           "screen-run",
           "screen-history",
@@ -820,6 +862,74 @@
           return fallback;
         }
       }
+
+      /* Token truy cập (bật bằng biến ACCESS_TOKEN ở server — trống thì server bỏ
+   qua toàn bộ bước này, mọi request qua thẳng như trước). Lưu localStorage,
+   không phải sessionStorage như visitId: đây là mật khẩu, phải sống qua việc
+   đóng/mở lại tab, không phải một cái vé dùng-một-lần. */
+      const TOKEN_KEY = "cap.access_token";
+      let ACCESS_TOKEN = null;
+      function ls(fn, fallback) {
+        try {
+          return fn(window.localStorage);
+        } catch (e) {
+          return fallback;
+        }
+      }
+      function getAccessToken() {
+        if (ACCESS_TOKEN === null)
+          ACCESS_TOKEN = ls((st) => st.getItem(TOKEN_KEY), "") || "";
+        return ACCESS_TOKEN;
+      }
+      function setAccessToken(token) {
+        ACCESS_TOKEN = token || "";
+        ls((st) =>
+          token ? st.setItem(TOKEN_KEY, token) : st.removeItem(TOKEN_KEY),
+        );
+      }
+      function showGate(msg) {
+        NAV_GEN++;
+        $("#gate-err").classList.toggle("hidden", !msg);
+        if (msg) $("#gate-err").textContent = msg;
+        $("#gate-token").value = "";
+        show("screen-gate");
+      }
+      /* Mọi gọi /api/* phải qua đây thay vì fetch() thẳng: tự kèm token, và khi
+   server trả 401 (thiếu/sai token — do server bật ACCESS_TOKEN sau khi trang
+   đã tải, hoặc token cũ hết hiệu lực) thì tự bung màn khoá ngay tại chỗ gọi,
+   thay vì phải xử lý 401 rải rác ở gần chục nơi gọi API khác nhau trong file
+   này. */
+      async function apiFetch(url, opts) {
+        const token = getAccessToken();
+        const headers = Object.assign({}, (opts && opts.headers) || {});
+        if (token) headers["X-Access-Token"] = token;
+        const res = await fetch(url, Object.assign({}, opts, { headers }));
+        if (res.status === 401) {
+          setAccessToken("");
+          // Trống mà vẫn 401 là lần đầu ghé — chưa từng nhập gì để mà "sai".
+          showGate(token ? "Token không đúng hoặc đã hết hạn." : "");
+        }
+        return res;
+      }
+      $("#gate-go").onclick = async () => {
+        const token = $("#gate-token").value.trim();
+        if (!token) return;
+        setAccessToken(token);
+        const btn = $("#gate-go");
+        btn.disabled = true;
+        const res = await apiFetch("/api/options");
+        btn.disabled = false;
+        if (res.status === 401) return; // apiFetch đã tự bung lại gate kèm lỗi
+        if (!res.ok) {
+          $("#gate-err").textContent = "Không kết nối được, thử lại.";
+          $("#gate-err").classList.remove("hidden");
+          return;
+        }
+        // Đơn giản nhất: tải lại để chạy đúng luồng khởi động bình thường, giờ
+        // đã có token hợp lệ trong localStorage.
+        location.reload();
+      };
+
       function visitId() {
         if (!VISIT_ID) {
           VISIT_ID =
@@ -903,9 +1013,12 @@
         $("#light-model").value = "";
       }
 
-      fetch("/api/options")
-        .then((r) => r.json())
+      apiFetch("/api/options")
+        .then((r) => (r.ok ? r.json() : null))
         .then((o) => {
+          // 401 đã tự bung màn khoá trong apiFetch(); lỗi khác thì im lặng bỏ
+          // qua, không có gì để dựng UI từ một response rỗng.
+          if (!o) return;
           OPTIONS = o;
           o.platforms.forEach((p) =>
             $("#platform").add(new Option(p.label, p.value)),
@@ -1002,7 +1115,7 @@
           visit_id: visitId(),
         };
         $("#go").disabled = true;
-        const res = await fetch("/api/run", {
+        const res = await apiFetch("/api/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -1037,6 +1150,10 @@
         RESUMED = false;
         STEPS.length = 0;
         $("#steps").innerHTML = "";
+        $("#outline-panel").classList.add("hidden");
+        $("#outline-list").innerHTML = "";
+        $("#outline-feedback").value = "";
+        setOutlineBusy(false);
         $("#log").textContent = "";
         LOG_ERROR_SEEN = false;
         $("#log-details").open = false;
@@ -1087,12 +1204,55 @@
         const btn = $("#stop-btn");
         btn.disabled = true;
         btn.textContent = "Đang dừng…";
-        await fetch("/api/stop", {
+        await apiFetch("/api/stop", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: RUN_ID }),
         });
       };
+
+      function setOutlineBusy(busy) {
+        ["#outline-approve", "#outline-regenerate", "#outline-cancel"].forEach(
+          (sel) => {
+            $(sel).disabled = busy;
+          },
+        );
+      }
+
+      async function postOutlineDecision(action, feedback) {
+        setOutlineBusy(true);
+        try {
+          const res = await apiFetch("/api/outline", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: RUN_ID, action, feedback }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const b = $("#run-err");
+            b.textContent = data.error || "Không thực hiện được.";
+            b.classList.remove("hidden");
+            setOutlineBusy(false);
+            return;
+          }
+          // Server đã đổi trạng thái — kéo bản mới nhất ngay, khỏi chờ nhịp poll kế tiếp.
+          poll();
+        } catch (exc) {
+          setOutlineBusy(false);
+        }
+      }
+
+      $("#outline-approve").onclick = () => postOutlineDecision("approve");
+      $("#outline-cancel").onclick = () => {
+        if (!confirm("Huỷ lần chạy này? Outline đã dựng sẽ không được lưu."))
+          return;
+        postOutlineDecision("cancel");
+      };
+      $("#outline-regenerate").onclick = () => {
+        const feedback = $("#outline-feedback").value.trim();
+        postOutlineDecision("regenerate", feedback);
+      };
+
       function showFormErr(msg) {
         const b = $("#form-err");
         b.textContent = msg;
@@ -1109,7 +1269,7 @@
           const url =
             "/api/result?page_id=" + encodeURIComponent(ref.replace(/^n:/, ""));
           const gen = NAV_GEN;
-          fetch(url)
+          apiFetch(url)
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => {
               if (d && gen === NAV_GEN)
@@ -1148,7 +1308,7 @@
         if (refresh) q.set("refresh", "1");
         const seq = ++HIST_SEQ,
           gen = NAV_GEN;
-        return fetch("/api/runs?" + q)
+        return apiFetch("/api/runs?" + q)
           .then((r) => r.json())
           .then((data) => {
             if (seq !== HIST_SEQ || gen !== NAV_GEN) return;
@@ -1210,7 +1370,7 @@
       async function openRunResult(r) {
         const gen = ++NAV_GEN;
         try {
-          const res = await fetch(
+          const res = await apiFetch(
             "/api/result?page_id=" + encodeURIComponent(r.page_id),
           );
           if (!res.ok) {
@@ -1272,16 +1432,19 @@
    Không cần xoá tay ở đâu cả. */
       let ACTIVE_COUNT = 0;
       function refreshActive() {
-        return fetch("/api/active")
+        return apiFetch("/api/active")
           .then((r) => r.json())
           .then(({ runs }) => {
             runs = runs || [];
             const box = $("#active-list");
             box.innerHTML = "";
             runs.forEach((r) => {
-              const step = r.step
-                ? `${r.step.name} (${r.step.index}/${r.step.total})`
-                : "đang khởi động…";
+              const awaitingOutline = r.status === "awaiting_outline";
+              const step = awaitingOutline
+                ? "chờ duyệt outline"
+                : r.step
+                  ? `${r.step.name} (${r.step.index}/${r.step.total})`
+                  : "đang khởi động…";
               const d = el("div", "past-item");
               const left = el("div");
               left.append(el("div", "t", r.topic || "(chưa có chủ đề)"));
@@ -1299,11 +1462,13 @@
                     .join(" · "),
                 ),
               );
-              /* Badge đếm đúng thời gian đã chạy, khớp với đồng hồ ở màn tiến trình.
-         Trước đây chỗ này in giờ bắt đầu dạng "HH:MM" nên nhìn cứ tưởng là
-         thời lượng. Giờ bắt đầu chuyển xuống tooltip. */
+              /* Badge đếm đúng thời gian đã chạy, khớp với đồng hồ ở màn tiến trình —
+         trừ lúc đang tạm dừng chờ duyệt outline thì đứng yên (đếm giờ chờ
+         người, không phải giờ máy chạy, sẽ gây hiểu lầm). Giờ bắt đầu nằm ở
+         tooltip. */
               const badge = el("div", "running-badge");
               badge.dataset.since = r.started_at || 0;
+              badge.dataset.awaiting = awaitingOutline ? "1" : "";
               if (r.started)
                 badge.title = "Bắt đầu lúc " + r.started + " (giờ VN)";
               d.append(left, badge);
@@ -1323,6 +1488,10 @@
         document
           .querySelectorAll("#active-list .running-badge")
           .forEach((b) => {
+            if (b.dataset.awaiting === "1") {
+              b.textContent = "Chờ duyệt outline";
+              return;
+            }
             const since = Number(b.dataset.since) || 0;
             b.textContent =
               "Đang chạy · " +
@@ -1346,7 +1515,9 @@
 
       /* ---------- màn 2 ---------- */
       /* `key` khớp với tên bước mà pipeline.ts phát ra trong event "step" ("Research",
-   "Script", "Metadata") — đổi bên đó phải sửa cả ở đây. */
+   "Outline", "Script", "Hoàn thiện") — đổi bên đó phải sửa cả ở đây. Giữa
+   Outline và Script là checkpoint: pipeline dừng hẳn (status "awaiting_outline"),
+   panel #outline-panel hiện ra thay vì bước "Script" tự chuyển sang active. */
       const STEP_PLAN = [
         {
           key: "__init__",
@@ -1360,23 +1531,30 @@
             `Tìm thông tin có nguồn bằng ${b.model || "model"}, chấm độ tin cậy từng ý`,
         },
         {
-          key: "Script",
-          title: "Dựng kịch bản",
+          key: "Outline",
+          title: "Dựng outline",
           desc: (b) =>
-            `Chia phân đoạn và viết lời thoại khớp ngân sách ${fmtDur(b.duration) || "—"}`,
+            `Chọn góc kể chuyện, chia cấu trúc theo ngân sách ${fmtDur(b.duration) || "—"} — dừng lại để bạn duyệt`,
         },
         {
-          key: "Metadata",
-          title: "Sinh metadata đăng bài",
+          key: "Script",
+          title: "Dựng kịch bản",
+          desc: (b) => `Viết lời thoại đầy đủ theo outline đã duyệt`,
+        },
+        {
+          key: "Hoàn thiện",
+          title: "B-roll & metadata",
           desc: (b) =>
-            `Rút tiêu đề, mô tả và hashtag cho ${b.platform_label || "nền tảng đã chọn"}`,
+            `Gợi ý B-roll và sinh tiêu đề, mô tả, hashtag cho ${b.platform_label || "nền tảng đã chọn"}`,
         },
       ];
 
       const SUBSTAGE_TEXT = {
         "research.search": "Tìm kiếm web và thu thập nguồn",
         "research.structure": "Sắp xếp thành ghi chú có nguồn",
+        outline: "Dựng cấu trúc video",
         script: "Viết lời thoại và gợi ý hình ảnh",
+        broll: "Gợi ý từ khoá B-roll",
         metadata: "Sinh tiêu đề, mô tả và hashtag",
       };
 
@@ -1457,6 +1635,16 @@
         box.append(el("div", null, text));
       }
 
+      function renderOutline(outline) {
+        const ul = $("#outline-list");
+        ul.innerHTML = "";
+        (outline?.structure || []).forEach((s) => {
+          ul.append(
+            el("li", null, `${s.section} (${s.duration_sec}s) — ${s.goal}`),
+          );
+        });
+      }
+
       function render(events) {
         for (const ev of events) {
           if (ev.type === "step") {
@@ -1466,6 +1654,8 @@
             addSubLine("✓ " + (SUBSTAGE_TEXT[ev.stage] || ev.stage) + model);
           } else if (ev.type === "retry") {
             addSubLine("↻ " + ev.message);
+          } else if (ev.type === "outline") {
+            renderOutline(ev.outline);
           } else if (ev.type === "error") {
             const b = $("#run-err");
             b.textContent = ev.message;
@@ -1483,9 +1673,26 @@
         }
       }
 
+      /* postOutlineDecision() gọi poll() thủ công để phản hồi nhanh sau khi bấm
+   nút, ngoài vòng setTimeout(poll,700) đang tự lặp — hai lời gọi có thể chồng
+   lên nhau (cùng đọc SINCE cũ, cùng nhận lại đúng batch event, render() lặp
+   lại các dòng log/subline vốn không idempotent). Cờ này chỉ bỏ qua lượt gọi
+   thừa; vòng lặp chính vẫn tiếp tục vì nó tự lên lịch từ bên trong pollOnce(),
+   không phụ thuộc lượt bị bỏ qua. */
+      let POLL_INFLIGHT = false;
       async function poll() {
+        if (POLL_INFLIGHT) return;
+        POLL_INFLIGHT = true;
+        try {
+          await pollOnce();
+        } finally {
+          POLL_INFLIGHT = false;
+        }
+      }
+
+      async function pollOnce() {
         const gen = NAV_GEN;
-        const r = await fetch(`/api/status?id=${RUN_ID}&since=${SINCE}`);
+        const r = await apiFetch(`/api/status?id=${RUN_ID}&since=${SINCE}`);
         const s = await r.json();
         if (gen !== NAV_GEN) return;
         SINCE = s.total_events;
@@ -1496,7 +1703,14 @@
         }
         render(s.events);
 
-        if (s.status === "running") {
+        // Chờ duyệt cũng phải poll tiếp: "Yêu cầu làm lại" đổi outline trong lúc
+        // vẫn ở awaiting_outline, và "Duyệt" đổi status sang "running" từ phía
+        // server — cả hai chỉ thấy được ở nhịp poll kế tiếp nếu không dừng ở đây.
+        const awaitingOutline = s.status === "awaiting_outline";
+        $("#outline-panel").classList.toggle("hidden", !awaitingOutline);
+        if (awaitingOutline) setOutlineBusy(false);
+
+        if (s.status === "running" || awaitingOutline) {
           setTimeout(poll, 700);
           return;
         }
@@ -1689,6 +1903,35 @@
         pre.style.maxHeight = "460px";
         pre.textContent = res.script_md || "";
         box.append(pre);
+
+        // outline/broll là null cho các lần chạy cũ (trước khi có hai agent này)
+        // — Notion cũ không có dữ liệu, không phải lỗi đọc, nên chỉ ẩn mục đi.
+        if (res.outline?.structure?.length) {
+          box.append(el("h2", null, "outline.json"));
+          const ul = el("ul", "plain");
+          res.outline.structure.forEach((s) => {
+            ul.append(
+              el("li", null, `${s.section} (${s.duration_sec}s) — ${s.goal}`),
+            );
+          });
+          box.append(ul);
+        }
+
+        if (res.broll?.items?.length) {
+          box.append(el("h2", null, "broll_list.csv"));
+          res.broll.items.forEach((item) => {
+            const d = el("div", "fact");
+            const head = el("p");
+            head.append(el("span", "chip", item.shot_type));
+            head.append(document.createTextNode(" " + item.section));
+            d.append(head);
+            d.append(
+              el("span", "hint", item.search_keywords.join(", ")),
+            );
+            if (item.note) d.append(el("p", null, "📝 " + item.note));
+            box.append(d);
+          });
+        }
         return box;
       }
     </script>
